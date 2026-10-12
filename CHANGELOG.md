@@ -77,9 +77,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   to the start of the message in the order the files were picked, once a `/command` being typed or
   an IME composition is finished. It used to go where the caret
   was, so a path that arrived while you typed landed in the middle of your words and moved the caret.
-- A file's `@path` is never cut short when the message is nearly 20,000 characters: it waits, its
-  tile says "No room" and the status line says how many characters to remove, then it goes in once
-  there is room. Within 200 characters of the limit the status line counts what is left.
+- A file whose `@path` has no room in a message near 20,000 characters says so: its tile reads
+  "No room" and the status line says how many characters to remove. Removing that file lets the
+  files picked after it in. Within 200 characters of the limit the status line counts what is left.
 - Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 - **Send now** on a working Codex pane sends the message at once. Codex kept it until its next

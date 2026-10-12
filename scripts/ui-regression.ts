@@ -1384,6 +1384,21 @@ try {
   await until(async () => /^@\S*fourteenth-\S* x+$/.test(await composer.inputValue()), "the path goes in once there is room");
   assert.equal(short, /^@\S+ /.exec(await composer.inputValue())![0].length - 5, "the count was what the path needed");
   assert.equal(await roomless.count(), 0, "the chip is attached again");
+  // Removing the file with no room lets the paths waiting behind it in, with no edit of the text.
+  const mentionLength = /^@\S+ /.exec(await composer.inputValue())![0].length - "fourteenth.txt".length;
+  const long = `fifteenth${"y".repeat(60)}.txt`;
+  await composer.fill("x".repeat(MAX_COMPOSER_CHARS - mentionLength - "sixteenth.txt".length - 20));
+  await pickFiles(long, "sixteenth.txt");
+  await until(() => held.has(long) && held.has("sixteenth.txt"), "fifteenth and sixteenth uploads in flight");
+  await finish(long);
+  await roomless.waitFor();
+  await finish("sixteenth.txt");
+  assert.match(await roomless.innerText(), /No room/);
+  assert.equal(await sendButton.isDisabled(), true, "the short path waits behind the long one");
+  assert.doesNotMatch(await composer.inputValue(), /sixteenth/u);
+  await page.getByRole("button", { name: `Remove ${long}`, exact: true }).click();
+  await until(async () => /^@\S*sixteenth-\S* x+$/.test(await composer.inputValue()), "the short path goes in once the long one is removed");
+  await until(async () => !(await sendButton.isDisabled()), "Send is back once every path is in");
   await composer.fill("");
   console.log("PASS a path that does not fit waits whole and says how much to cut, and the count shows only near the limit");
 

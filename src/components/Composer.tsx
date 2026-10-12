@@ -764,8 +764,12 @@ export function Composer({
         caretRef.current = Math.min(caretRef.current, next.length);
         return next;
       });
+    } else {
+      // removing a path that had no room leaves the text as it was, so the paths waiting behind it
+      // would wait for the next edit: try them now
+      placeWaitingMentions();
     }
-  }, []);
+  }, [placeWaitingMentions]);
 
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over */
   const send = useCallback((clearDraft?: string) => {
