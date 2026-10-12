@@ -617,7 +617,8 @@ export function Composer({
 
   // an upload finishes while the user may be typing: its mention goes to the start (insertLeadingMention),
   // and the caret and selection only move along with the text they sit in, without taking focus
-  const insertMentionAtStart = useCallback((mention: string, earlier: readonly string[]) => {
+  // `false` when the message has no room for the whole mention: nothing is written then
+  const insertMentionAtStart = useCallback((mention: string, earlier: readonly string[]): boolean => {
     const element = textareaRef.current;
     const currentText = textRef.current;
     const selectionIsCurrent = element?.value === currentText;
@@ -625,6 +626,7 @@ export function Composer({
     const end = selectionIsCurrent ? (element.selectionEnd ?? start) : start;
     const direction = selectionIsCurrent ? (element.selectionDirection ?? undefined) : undefined;
     const next = insertLeadingMention(currentText, mention, earlier);
+    if (next.length === 0) return false;
     const moved = (position: number) => (position >= next.at ? position + next.length : position);
     textRef.current = next.text;
     caretRef.current = moved(start);
@@ -633,6 +635,7 @@ export function Composer({
       setCaret(moved(start));
     });
     if (element) element.setSelectionRange(moved(start), moved(end), direction);
+    return true;
   }, []);
 
   // one queue for the whole box: a pick made while another uploads waits its turn
@@ -648,11 +651,14 @@ export function Composer({
     if (composingRef.current || /^\/\S*$/u.test(textRef.current)) return;
     const waiting = waitingMentions.current.sort((a, b) => a.id - b.id);
     waitingMentions.current = [];
-    for (const { id, path } of waiting) {
+    for (const [index, { id, path }] of waiting.entries()) {
       if (removedAttachments.current.has(id)) continue;
       const mention = imageMention(path);
       const earlier = [...placedMentions.current].filter(([placed]) => placed < id).map(([, placed]) => placed);
-      insertMentionAtStart(mention, earlier);
+      // no room for the whole path: this attachment and the ones picked after it stay uploading, in
+      // their order, Send stays off, and the next edit of the text tries again (the effect below);
+      // a cut path would name a file that is not there
+      if (!insertMentionAtStart(mention, earlier)) { waitingMentions.current.push(...waiting.slice(index)); break; }
       placedMentions.current.set(id, mention);
       setAttachments((current) => current.map((item) => (item.id === id ? { ...item, path, state: "ready" } : item)));
     }
@@ -770,7 +776,7 @@ export function Composer({
       textRef.current = rest;
       caretRef.current = rest.length;
       setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.") : null);
-      for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.previewUrl);
+      for (const attachment of sentAttachments) { URL.revokeObjectURL(attachment.previewUrl); placedMentions.current.delete(attachment.id); }
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
     if (!composerDrafts.begin(draftKey, sent)) return;

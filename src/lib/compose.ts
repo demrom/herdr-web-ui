@@ -75,8 +75,9 @@ export function imageMention(path: string): string {
  * (it must stay first to be one), and after the mentions of files picked before it in the same
  * batch that are still there, so a batch reads in pick order however its uploads finish. An upload
  * finishes while the user may be typing, so the mention never goes where the caret is: the caller
- * shifts the caret and selection by `length` when they sit at or after `at`. The insertion is cut
- * to what still fits under MAX_COMPOSER_CHARS.
+ * shifts the caret and selection by `length` when they sit at or after `at`. The mention goes in
+ * whole, with its separating space, or not at all (`length` 0): a cut `@path` would name a file
+ * that does not exist, so the caller keeps the attachment waiting until there is room.
  */
 export function insertLeadingMention(
   text: string,
@@ -90,8 +91,8 @@ export function insertLeadingMention(
   }
   const before = text.slice(0, at);
   const snippet = before.length > 0 && !/\s$/u.test(before) ? ` ${mention}` : mention;
-  const inserted = snippet.slice(0, Math.max(0, MAX_COMPOSER_CHARS - text.length));
-  return { text: before + inserted + text.slice(at), at, length: inserted.length };
+  if (text.length + snippet.length > MAX_COMPOSER_CHARS) return { text, at, length: 0 };
+  return { text: before + snippet + text.slice(at), at, length: snippet.length };
 }
 
 /** Ready states affect the held-message hint only; sending always requires a user action. */

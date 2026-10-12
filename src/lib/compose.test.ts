@@ -110,9 +110,14 @@ describe("insertLeadingMention", () => {
     expect(insertLeadingMention("notes", second, [first])).toEqual({ text: `${second}notes`, at: 0, length: 12 });
   });
 
-  it("cuts the insertion to what still fits", () => {
+  it("goes in whole or not at all: a cut path would name a file that does not exist", () => {
     const full = "x".repeat(MAX_COMPOSER_CHARS - 2);
-    expect(insertLeadingMention(full, first, [])).toEqual({ text: `@/${full}`, at: 0, length: 2 });
+    expect(insertLeadingMention(full, first, [])).toEqual({ text: full, at: 0, length: 0 });
+    const room = "x".repeat(MAX_COMPOSER_CHARS - first.length);
+    expect(insertLeadingMention(room, first, [])).toEqual({ text: `${first}${room}`, at: 0, length: first.length });
+    // the separating space counts: after a command with no room for it, nothing goes in
+    const command = `/review${"x".repeat(MAX_COMPOSER_CHARS - 7 - first.length)}`;
+    expect(insertLeadingMention(command, first, [])).toEqual({ text: command, at: command.length, length: 0 });
   });
 });
 
