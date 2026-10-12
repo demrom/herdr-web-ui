@@ -32,7 +32,7 @@ import {
   type DraftRefusal,
   formatTokens,
   imageMention,
-  insertMention,
+  insertLeadingMention,
   MAX_COMPOSER_CHARS,
   rankSlashCommands,
   submitNote,
@@ -81,6 +81,7 @@ export interface ComposerProps {
   onUploadImage: (file: File) => Promise<string>;
 }
 
+const UPLOADS_AT_ONCE = 3;
 /**
  * Any file can be attached (an icon, a PDF, a log): the server stores it beside the pane
  * and the message mentions its path. These image types also get a thumbnail.
@@ -374,6 +375,9 @@ export function Composer({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // files not yet sent and paths not yet placed go with the pane
+      uploadQueue.current = [];
+      waitingMentions.current = [];
       for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.previewUrl);
     };
   }, []);
@@ -610,18 +614,64 @@ export function Composer({
     if (activeRef.current) element.focus();
   }, []);
 
-  const insertMentionAtCursor = useCallback(
-    (mention: string) => {
-      const element = textareaRef.current;
-      const currentText = textRef.current;
-      const selectionIsCurrent = element?.value === currentText;
-      const start = selectionIsCurrent ? (element.selectionStart ?? caretRef.current) : caretRef.current;
-      const end = selectionIsCurrent ? (element.selectionEnd ?? start) : start;
-      const next = insertMention(currentText, start, end, mention);
-      setTextAndCaret(next.text, next.caret);
-    },
-    [setTextAndCaret],
-  );
+  // an upload finishes while the user may be typing: its mention goes to the start (insertLeadingMention),
+  // and the caret and selection only move along with the text they sit in, without taking focus
+  // `false` when the message has no room for the whole mention: nothing is written then
+  const insertMentionAtStart = useCallback((mention: string, earlier: readonly string[]): boolean => {
+    const element = textareaRef.current;
+    const currentText = textRef.current;
+    const selectionIsCurrent = element?.value === currentText;
+    const start = selectionIsCurrent ? (element.selectionStart ?? caretRef.current) : caretRef.current;
+    const end = selectionIsCurrent ? (element.selectionEnd ?? start) : start;
+    const direction = selectionIsCurrent ? (element.selectionDirection ?? undefined) : undefined;
+    const next = insertLeadingMention(currentText, mention, earlier);
+    if (next.length === 0) return false;
+    const moved = (position: number) => (position >= next.at ? position + next.length : position);
+    textRef.current = next.text;
+    caretRef.current = moved(start);
+    flushSync(() => {
+      setText(next.text);
+      setCaret(moved(start));
+    });
+    if (element) element.setSelectionRange(moved(start), moved(end), direction);
+    return true;
+  }, []);
+
+  // one queue for the whole box: a pick made while another uploads waits its turn
+  const uploadQueue = useRef<Attachment[]>([]);
+  const uploadsRunning = useRef(0);
+  /** paths placed so far, by attachment id: ids follow pick order */
+  const placedMentions = useRef(new Map<number, string>());
+  /** finished uploads whose paths wait for a /command or an IME composition to end */
+  const waitingMentions = useRef<{ id: number; path: string }[]>([]);
+  /** what the latest pick left out, so an upload error of its batch repeats it */
+  const batchNote = useRef<string | null>(null);
+
+  const placeWaitingMentions = useCallback(() => {
+    if (waitingMentions.current.length === 0) return;
+    if (composingRef.current || /^\/\S*$/u.test(textRef.current)) return;
+    const waiting = waitingMentions.current.sort((a, b) => a.id - b.id);
+    waitingMentions.current = [];
+    for (const [index, { id, path }] of waiting.entries()) {
+      if (removedAttachments.current.has(id)) continue;
+      const mention = imageMention(path);
+      const earlier = [...placedMentions.current].filter(([placed]) => placed < id).map(([, placed]) => placed);
+      // no room for the whole path: this attachment and the ones picked after it stay uploading, in
+      // their order, Send stays off, and the next edit of the text tries again (the effect below);
+      // a cut path would name a file that is not there
+      if (!insertMentionAtStart(mention, earlier)) { waitingMentions.current.push(...waiting.slice(index)); break; }
+      placedMentions.current.set(id, mention);
+      setAttachments((current) => current.map((item) => (item.id === id ? { ...item, path, state: "ready" } : item)));
+    }
+  }, [insertMentionAtStart]);
+
+  // whatever wrote the text (typing, a completion, dictation, a cleared draft), a waiting path tries
+  // again in the next frame, after that write's own caret placement has landed
+  useEffect(() => {
+    if (waitingMentions.current.length === 0) return;
+    const frame = requestAnimationFrame(placeWaitingMentions);
+    return () => cancelAnimationFrame(frame);
+  }, [placeWaitingMentions, text]);
 
   const selectCompletion = useCallback(
     (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
@@ -645,8 +695,37 @@ export function Composer({
     [setTextAndCaret, text],
   );
 
+  const pumpUploads = useCallback(() => {
+    // a few at a time: each upload holds its file as base64 until it is sent
+    while (mounted.current && uploadsRunning.current < UPLOADS_AT_ONCE && uploadQueue.current.length > 0) {
+      const attachment = uploadQueue.current.shift()!;
+      if (removedAttachments.current.has(attachment.id)) continue;
+      uploadsRunning.current += 1;
+      void onUploadImage(attachment.file)
+        .then(
+          (path) => {
+            if (!mounted.current || removedAttachments.current.has(attachment.id)) return;
+            waitingMentions.current.push({ id: attachment.id, path });
+            placeWaitingMentions();
+          },
+          (error: unknown) => {
+            if (!mounted.current || removedAttachments.current.has(attachment.id)) return;
+            setAttachments((current) =>
+              current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
+            );
+            const failed = error instanceof Error ? error.message : String(error);
+            setNote(batchNote.current ? `${failed} ${batchNote.current}` : failed);
+          },
+        )
+        .finally(() => {
+          uploadsRunning.current -= 1;
+          pumpUploads();
+        });
+    }
+  }, [onUploadImage, placeWaitingMentions]);
+
   const uploadImages = useCallback(
-    async (incoming: readonly File[]) => {
+    (incoming: readonly File[]) => {
       const images = incoming.slice(0, settings.attachLimit);
       if (images.length === 0) return;
 
@@ -658,37 +737,21 @@ export function Composer({
         state: "uploading",
       }));
       setAttachments((current) => [...current, ...added]);
+      // the files left out of this pick: told now, and again beside an upload error of the batch
       const leftOut = images.length < incoming.length
         ? t("Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
         : null;
+      batchNote.current = leftOut;
       setNote(leftOut);
-
-      for (const attachment of added) {
-        if (!mounted.current) break;
-        try {
-          const path = await onUploadImage(attachment.file);
-          if (!mounted.current) break;
-          if (removedAttachments.current.has(attachment.id)) continue;
-          setAttachments((current) =>
-            current.map((item) => (item.id === attachment.id ? { ...item, path, state: "ready" } : item)),
-          );
-          insertMentionAtCursor(imageMention(path));
-        } catch (error) {
-          if (!mounted.current) break;
-          if (removedAttachments.current.has(attachment.id)) continue;
-          setAttachments((current) =>
-            current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
-          );
-          const failed = error instanceof Error ? error.message : String(error);
-          setNote(leftOut ? `${failed} ${leftOut}` : failed);
-        }
-      }
+      uploadQueue.current.push(...added);
+      pumpUploads();
     },
-    [insertMentionAtCursor, onUploadImage, settings.attachLimit, t],
+    [pumpUploads, settings.attachLimit, t],
   );
 
   const removeAttachment = useCallback((attachment: Attachment) => {
     removedAttachments.current.add(attachment.id);
+    placedMentions.current.delete(attachment.id);
     URL.revokeObjectURL(attachment.previewUrl);
     setAttachments((current) => current.filter((item) => item.id !== attachment.id));
     if (attachment.path) {
@@ -720,7 +783,7 @@ export function Composer({
       textRef.current = rest;
       caretRef.current = rest.length;
       setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.") : null);
-      for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.previewUrl);
+      for (const attachment of sentAttachments) { URL.revokeObjectURL(attachment.previewUrl); placedMentions.current.delete(attachment.id); }
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
     if (!composerDrafts.begin(draftKey, sent)) return;
@@ -992,7 +1055,12 @@ export function Composer({
         <textarea
           ref={textareaRef}
         onCompositionStart={() => { composingRef.current = true; }}
-        onCompositionEnd={() => { composingRef.current = false; }}
+        onCompositionEnd={() => {
+          composingRef.current = false;
+          // after the input that commits the candidate, which WebKit sends after compositionend, and
+          // in a frame, after the caret of dictation held through the composition has landed
+          setTimeout(() => requestAnimationFrame(() => { if (mounted.current) placeWaitingMentions(); }), 0);
+        }}
           className={`composer-text${manualHeight !== null ? " is-sized" : ""}`}
           rows={1}
           maxLength={MAX_COMPOSER_CHARS}

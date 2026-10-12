@@ -12,6 +12,7 @@ import type {
   FocusPaneRequest,
   HealthAuth,
   IntegrationsResponse,
+  LanExposure,
   InteractivePrompt,
   MovePaneDestination,
   MovePaneRequest,
@@ -59,7 +60,7 @@ import type {
 import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
 import { readInstalledNotes, readUpdateNotes, type HerdrUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
-import type { ReportedSetting, TelemetryStatus } from "../../shared/telemetry.ts";
+import type { TelemetryChange, TelemetryStatus } from "../../shared/telemetry.ts";
 import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
@@ -125,7 +126,7 @@ export async function fetchTelemetry(): Promise<TelemetryStatus | null> {
   catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
 }
 
-export async function changeTelemetry(change: { enabled?: boolean; notice_seen?: true; changed_settings?: ReportedSetting[] }): Promise<TelemetryStatus> {
+export async function changeTelemetry(change: TelemetryChange): Promise<TelemetryStatus> {
   const url = "/api/telemetry";
   const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify(change) });
   if (!response.ok) throw await errorFrom(url, response);
@@ -295,6 +296,8 @@ export interface HealthInfo {
   web_ui?: { boot_id: string | null; revision: string | null };
   /** Absent only on a server that predates the token gate. */
   auth?: HealthAuth;
+  /** present only while this server is reachable beyond this PC with no token and nothing paired */
+  lan_exposure?: LanExposure;
 }
 
 export async function fetchHealth(): Promise<HealthInfo> {

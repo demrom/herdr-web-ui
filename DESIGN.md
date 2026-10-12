@@ -1133,8 +1133,11 @@ One set for both themes: the card is island black wherever it shows.
   `@` completions query `GET /api/pane/files`. Arrow keys navigate, Enter/Tab accepts, Escape closes.
 - Paste, picker or drag/drop attaches up to **Files at once** files per action (Settings → Chat, 20 unless the
   device chose 1 to 50); the message box names how many it left out. An image is stored as a paste, any other
-  file under its own sanitised name. Each uploads through `POST /api/pane/image` and inserts a removable
-  editable `@path` mention.
+  file under its own sanitised name. Each uploads through `POST /api/pane/image`, three at a time
+  across all picks, and puts a removable editable `@path` mention at the start of the message (after
+  a leading `/command`), in the order the files were picked. A path waits while the box holds only a
+  `/command` still being typed or an IME composition. The caret and selection move only with the
+  text they sit in, so typing while files upload is not disturbed.
 - While a phone's keyboard is up, a tap on the transcript or a drag down it (`32px`) puts the
   keyboard away. Each only blurs the field, so the draft stays. The prompt card, which can stand
   where the transcript was on a short screen, does the same: a tap on its text (never on an
@@ -1222,10 +1225,10 @@ One set for both themes: the card is island black wherever it shows.
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
 - Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
   (panes open in, show thinking, chat width, chat font size and family, highlight code; then
-  **Composer**: Enter sends, files at once, suggestion chip; then **Quick replies**; then **File viewer**: wrap long
+  **Composer**: optional plain PageUp/PageDown chat scrolling (off by default), Enter sends, files at once, suggestion chip; then **Quick replies**; then **File viewer**: wrap long
   lines, Markdown width), **Terminal** (font size, 80 columns in a split, font family, wheel
   speed, input mode, Key bar), **Alerts**, **Voice input**, **Subscription usage**,
-  **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (the phone address,
+  **Shortcuts** (the platform-resolved global bindings, then **Paging** with a 0–100 line overlap stepper; one line by default, zero for a full viewport), **Phone & devices** (the phone address,
   Keep screen on, Install; then paired devices), **Remote PCs**, **About** (Updates, herdr,
   the repository links). A button that points at Updates opens the dialog on About.
 - Every page is built from the same parts (`components/SettingsControls.tsx`). A group is an
@@ -1291,6 +1294,11 @@ One set for both themes: the card is island black wherever it shows.
   Page Up/Down and Home/End call `pane.scroll`; this moves the shared viewport for every client,
   including the TUI. Pending pointer moves are coalesced, requests retain their owning PC/pane,
   and a failed request displays an error instead of inventing a local history position.
+- Mod+Shift+PageUp/PageDown pages the selected pane only, preserving chat composer focus and
+  selection. Chat moves instantly by its viewport minus the configured prose-line overlap;
+  Terminal and focused scrollbar PageUp/PageDown use native viewport rows minus that overlap.
+  A large overlap still advances one pixel or one terminal row. Paging is blocked by modals;
+  repeated terminal pages accumulate against the pending offset until herdr acknowledges it.
 - Explicit Find cancels unsent scrollbar offsets and waits for a native scroll already sent;
   the scrollbar is disabled until that search ends, so an older drag cannot overwrite its result.
 - xterm has `scrollback: 0`; wheel/touch gestures reach herdr's alternate-screen scrollback. The
@@ -1405,7 +1413,12 @@ One set for both themes: the card is island black wherever it shows.
   Bindings belong to this browser, not the remote PC or pane. Hold-to-dictate remains fixed.
 - Text-field selection and IME composition keep their keys. Focus-local list/tab navigation and
   reordering are separate from global bindings; they must not intercept terminal input.
-  Global actions target the selected pane, and a handled shortcut must never also reach its PTY.
+  Global actions target the selected pane, and the original handled chord must never also reach its PTY.
+  Paging scrolls herdr history when present; an explicit valid zero-history result instead sends
+  one plain PageUp/PageDown through the existing live input lease to the running application.
+  Application-owned paging has its own page length; no page input is queued across disconnects.
+  The opt-in plain chat page keys preserve composer draft, selection and focus, excluding modified
+  keys, composition, other editable controls and modal input. They do not capture terminal keys.
 - On touch screens app actions stay in buttons and menus, including the palette in More on phones.
   The key bar sends terminal input only; it is not an app-action toolbar. Hardware keyboards use
   the same global bindings on phones and desktops.

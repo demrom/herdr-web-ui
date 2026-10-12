@@ -38,12 +38,13 @@ import { RenderBoundary } from "./RenderBoundary.tsx";
 import { Composer } from "./Composer.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
 import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
-import type { PaneView } from "../lib/actions.ts";
+import type { PaneControls, PaneView } from "../lib/actions.ts";
 import { usePaneLane } from "../lib/chatLane.ts";
 import { useSettings, terminalTheme, type Palette, type ResolvedTheme, type TerminalCursorStyle } from "../lib/settings.ts";
 import { loadFontStack, TERMINAL_FONT_STACK, terminalFontStack } from "../lib/fontFamily.ts";
 import { useT } from "../lib/i18n.ts";
 import { isAppShortcut } from "../lib/shortcuts.ts";
+import { plainPageDirection } from "../lib/pageScroll.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } from "../lib/terminalFileLinks.ts";
 import { adjustTerminalGlyphs } from "../lib/terminalGlyphs.ts";
@@ -90,6 +91,7 @@ export interface PaneTerminalProps {
   /** the lens over the pane: the chat transcript, or the live xterm grid (App remembers it per pane) */
   view: PaneView;
   findRequest?: number;
+  controls?: { current: PaneControls | null };
   /** Only the selected tile may take keyboard focus after async work or a lens change. */
   active?: boolean;
   /** App selected this pane itself (the selected one closed): switching to it must not take the keyboard */
@@ -144,6 +146,7 @@ export function PaneTerminal({
   machineName = "",
   view,
   findRequest = 0,
+  controls,
   active = true,
   autoSelected = false,
   terminalFontSize,
@@ -213,6 +216,7 @@ export function PaneTerminal({
   /** the user's font size (settings, or a pinch in progress); a narrow split pane may draw smaller */
   const baseFontRef = useRef(terminalFontSize);
   const stackRef = useRef<HTMLDivElement | null>(null);
+  const pageScroll = useRef<((direction: -1 | 1) => void) | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   /** OSC 8 links this app cannot open are not drawn (#739); its state ends with `term.reset()` */
@@ -2219,6 +2223,43 @@ export function PaneTerminal({
   // Capture the owner's pane for the entire upload batch, even across a pane switch.
   const uploadImage = useCallback((file: File) => uploadPaneImage(paneId ?? "", file), [paneId]);
 
+  useEffect(() => {
+    if (!active || !paneId || !settings.chatPageKeys) return;
+    const onPage = (event: KeyboardEvent) => {
+      const direction = plainPageDirection(event);
+      if (direction === null || event.defaultPrevented || !activeRef.current || !presentedRef.current || !chatViewRef.current || modalOpen()
+          || isAppShortcut(event, shortcutSettings.current) || pageScroll.current === null) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest("input, textarea, [contenteditable=true]") && !target.matches(".composer-text")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pageScroll.current(direction);
+    };
+    window.addEventListener("keydown", onPage, true);
+    return () => window.removeEventListener("keydown", onPage, true);
+  }, [active, paneId, settings.chatPageKeys]);
+
+  const sendApplicationPage = useCallback((direction: -1 | 1) => {
+    const pane = paneRef.current, socket = socketRef.current;
+    if (!pane || !socket?.connected || !activeRef.current || !presentedRef.current || chatViewRef.current || modalOpen()
+        || observeRef.current || heldRef.current || endedRef.current || releasedRef.current || secretRef.current !== null
+        || composingRef.current || compositionCommitPendingRef.current) return;
+    // An explicit page action follows the program's own history when herdr has none.
+    // The live input lease refuses an unready pane and never queues this key for later.
+    socket.sendInput(pane, direction < 0 ? "\x1b[5~" : "\x1b[6~");
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!controls || !active || !paneId) return;
+    const current: PaneControls = {
+      scrollPage: (direction) => {
+        if (activeRef.current && presentedRef.current && !modalOpen()) pageScroll.current?.(direction);
+      },
+    };
+    controls.current = current;
+    return () => { if (controls.current === current) controls.current = null; };
+  }, [controls, active, paneId]);
+
   return (
     // data-direct-typing: xterm's own field raises the soft keyboard here (lib/viewport.ts)
     <div ref={stackRef} className={`terminal-stack${chatView ? " is-chat" : ""}${greeted ? " is-greeted" : ""}`} data-pane-owner={paneId === null ? undefined : paneStorageId(machineId, paneId)} data-direct-typing={coarse && directTyping && !chatView ? "" : undefined}>
@@ -2317,6 +2358,8 @@ export function PaneTerminal({
         <div className={`pane-terminal${paneId === null ? " is-idle" : ""}${!chatView && paneId !== null ? " has-viewport-tools" : ""}`} ref={hostRef} id={viewportId} data-mouse-reporting={mouseReporting && !observing && !held && !secretActive && connected && !chatView ? "" : undefined} role={chatView ? undefined : "region"} aria-roledescription={chatView ? undefined : t("Terminal")} aria-label={chatView ? undefined : terminalName} />
         <span className="terminal-font-size" ref={pinchBadgeRef} hidden aria-hidden="true" />
         {paneId !== null && <TerminalViewportTools key={paneId} viewportIntent={viewportIntent} terminal={terminal} paneId={paneId} viewportId={viewportId}
+          pageScroll={chatView ? undefined : pageScroll}
+          onApplicationPage={sendApplicationPage}
           enabled={presented && connected && outputReady && !chatView && !held && !ended && !released && !unsupported}
           interactive={!observing && !secretActive && !viewportSearching} search={searchState} onError={setInputError} />}
         {presented && paneId !== null && chatView && (
@@ -2332,6 +2375,7 @@ export function PaneTerminal({
           <ChatView
             key={paneId}
             paneId={paneId}
+            pageScroll={pageScroll}
             refreshKey={chatRefresh}
             invalidationKey={chatInvalidation}
             onConversationWatch={onConversationWatch}

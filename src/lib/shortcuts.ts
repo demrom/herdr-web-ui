@@ -9,6 +9,8 @@ export const SHORTCUTS = [
   { id: "palette", label: "Command palette", keys: ["Mod", "Shift", "K"] },
   { id: "find", label: "Find in terminal", keys: ["Mod", "Shift", "F"] },
   { id: "toggle-view", label: "Switch chat / terminal", keys: ["Mod", "Shift", "J"] },
+  { id: "scroll-up", label: "Scroll pane up", keys: ["Mod", "Shift", "PageUp"] },
+  { id: "scroll-down", label: "Scroll pane down", keys: ["Mod", "Shift", "PageDown"] },
   { id: "toggle-sidebar", label: "Toggle sidebar", keys: ["Mod", "Shift", "B"] },
   // Mod+Shift+N keeps working where the browser lets it through (the installed app), but Chrome
   // keeps Ctrl+Shift+N for a new incognito window in a tab: O is the one shown, and works in both
@@ -37,6 +39,8 @@ const KEY_TO_ID: Readonly<Record<string, ShortcutId>> = {
   k: "palette",
   f: "find",
   j: "toggle-view",
+  PageUp: "scroll-up",
+  PageDown: "scroll-down",
   b: "toggle-sidebar",
   n: "new-session",
   o: "new-session",
@@ -159,6 +163,12 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
           break;
         case "toggle-view":
           actions.toggleView();
+          break;
+        case "scroll-up":
+          actions.scrollPage(-1);
+          break;
+        case "scroll-down":
+          actions.scrollPage(1);
           break;
         case "toggle-sidebar":
           actions.toggleSidebar();

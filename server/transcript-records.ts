@@ -20,6 +20,40 @@ export function isContextClear(value: unknown, source: string): boolean {
   return /^\s*<command-name>\s*\/clear\s*<\/command-name>(?:\s*<command-message>clear<\/command-message>)?(?:\s*<command-args>\s*<\/command-args>)?\s*$/.test(message.content);
 }
 
+/**
+ * Another Claude session's message (Claude Code cross-session messaging). It starts the agent's
+ * work like a prompt, but nobody typed it here: a notice, sourced `peer:<sender>`. Claude records it
+ * as a meta `user` entry when it arrives between turns, and as a queued_command attachment when it
+ * arrives mid-turn; both carry `origin: { kind: "peer", name, body }`.
+ */
+export function claudePeerNotice(value: unknown): Extract<ConversationPart, { kind: "notice" }> | null {
+  const entry = record(value);
+  const queued = entry.type === "attachment" ? record(entry.attachment) : null;
+  if (queued !== null && queued.type !== "queued_command") return null;
+  if (queued === null && !(entry.type === "user" && entry.isMeta === true)) return null;
+  const origin = record(queued !== null ? queued.origin : entry.origin);
+  if (origin.kind !== "peer") return null;
+  const envelope = queued !== null ? queued.prompt : record(entry.message).content;
+  const parsed = typeof envelope === "string" ? /<cross-session-message\b([^>]*)>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(envelope) : null;
+  const body = typeof origin.body === "string" ? origin.body : parsed?.[2] ?? "";
+  // an unnamed sender leaves the source bare (`peer:`); the chat says "another session" for it
+  const name = typeof origin.name === "string" && origin.name.trim() ? origin.name.trim() : /\bfrom-name="([^"]+)"/.exec(parsed?.[1] ?? "")?.[1] ?? "";
+  return body.trim() ? { kind: "notice", text: body, source: `peer:${name}` } : null;
+}
+
+/**
+ * One delivery of another session's message, as Claude identifies it: the sender and its message id.
+ * Claude can record the same delivery twice (queued mid-turn, then echoed as a meta entry); the second
+ * record is the same notice. Null when the record does not carry both.
+ */
+export function claudePeerId(value: unknown): string | null {
+  const entry = record(value);
+  const queued = entry.type === "attachment" ? record(entry.attachment) : null;
+  const origin = record(queued !== null ? queued.origin : entry.origin);
+  return origin.kind === "peer" && typeof origin.from === "string" && typeof origin.msg_id === "string" && origin.from && origin.msg_id
+    ? `${origin.from}|${origin.msg_id}` : null;
+}
+
 /** Pi-family providers use several spellings for the same tool call/result fields. */
 export function piMessage(value: unknown): Row | null {
   const entry = record(value);

@@ -93,8 +93,13 @@ try {
       for (const socket of sockets) socket.push({ type: "conversation-changed", pane_id: infra, signature: "restored:" + signature });
     };
     const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
+    window.imageUploads = 0;
     window.fetch = (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
+      if (url.pathname === "/api/pane/image") {
+        window.imageUploads += 1;
+        return json({ path: "/tmp/notes.txt" });
+      }
       if (url.searchParams.get("pane_id") !== infra) return demo(input, init);
       if (url.pathname === "/api/pane/prompt") {
         window.promptReads += 1;
@@ -195,6 +200,20 @@ try {
         await promptReadsPast(page, await promptReads(page) + 1);
         assert.equal(await composer.inputValue(), own, "the user's own draft is never replaced");
         console.log("PASS a composer holding the user's own words is never overwritten by a restored send");
+
+        // an upload that finished while the box held only a restored `/command` waits on it, and
+        // its path goes in once the fill is cleared
+        await composer.fill("");
+        await boxValue(page, "");
+        await feed(page, "/compact", null);
+        await boxValue(page, "/compact");
+        await page.locator('input[type="file"]').setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("notes") });
+        await page.waitForFunction(() => (window as unknown as { imageUploads: number }).imageUploads === 1, undefined, { timeout: 10_000 });
+        await page.waitForTimeout(300);
+        assert.equal(await composer.inputValue(), "/compact", "the path waits on the restored command");
+        await feed(page, null, null);
+        await boxValue(page, "@/tmp/notes.txt ");
+        console.log("PASS a path that waited on a restored /command goes in once the fill is cleared");
 
         assert.deepEqual(errors, []);
       } finally { await desktop.close(); }

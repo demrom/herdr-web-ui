@@ -9,7 +9,7 @@ import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientR
 import { alertStatus, paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, authClient, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
-import { cameThroughProxy, decideAccess, isLoopbackAddress, isServeOwnerRequest } from "./access.ts";
+import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
 import { DeviceStore, handleDeviceRequest } from "./devices.ts";
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
@@ -96,6 +96,7 @@ import { MirrorSession } from "./mirror.ts";
 import { mirrorInput } from "./mirror-input.ts";
 import { PendingInputs, PendingInputError, type PendingIdentity, type PendingRecord } from "./pending-input.ts";
 import { PendingRequestBook } from "./pending-requests.ts";
+import { interruptCodexSteering } from "./codex-steering.ts";
 import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, ReplayBuffer } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
@@ -213,9 +214,6 @@ const RESTORED_CLEAR_SETTLE_MS = 300;
 /** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
 const RESTORED_CLEAR_RESERVE_MS = 2_000;
 const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "take-over", "watch", "conversation-watch"];
-
-/** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
-const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
 
 /** the sides herdr's pane.swap and pane.resize take; anything else is refused before the RPC, which would answer invalid_request */
 const isPaneDirection = (value: unknown): value is PaneDirection => value === "left" || value === "right" || value === "up" || value === "down";
@@ -771,7 +769,7 @@ export function createServer(
     if (attachment !== lease.attachment || attachment.pty !== lease.pty || !owner.data.attached.has(paneId)
       || !attachment.clients.has(owner) || !attachment.ready) throw new HerdrError("input_not_ready", "The pending message's pane connection changed");
   }
-  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean }> {
+  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean; screen: string }> {
     authorizePending(owner, paneId, lease);
     // The same normalized snapshot the client sees includes a known Codex finish that
     // herdr reports as unknown. Nothing is inferred from a bare unknown state.
@@ -803,7 +801,7 @@ export function createServer(
       throw new HerdrError("agent_not_ready", "The agent's current input state is not known");
     }
     authorizePending(owner, paneId, lease);
-    return { pane, identity: current, working: current.agent !== null && (pane.agent_status === "working" || collapsed) };
+    return { pane, identity: current, working: current.agent !== null && (pane.agent_status === "working" || collapsed), screen };
   }
   const pendingFault = (error: unknown) => ({
     code: error instanceof HerdrError || error instanceof PendingInputError ? error.code : "submit_failed",
@@ -854,7 +852,7 @@ export function createServer(
   }
 
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
-    automatic: boolean, arrivedAt: number, committing: (working: boolean) => void = () => {}): Promise<SubmitReply> {
+    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false): Promise<SubmitReply> {
     let wrote = false;
     // what the checks below read is older than a status event that arrives while they run
     let mark = pending.mark(paneId);
@@ -894,6 +892,19 @@ export function createServer(
       // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
       // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
       await paneSendKeys(paneId, [steering && beforeEnter.identity.agent === "claude" ? "ctrl+enter" : "Enter"], undefined, allowed);
+      // the status the panel was read under; a status event since (a finish, an approval) stales the Escape
+      let statusAtRead = pending.current(paneId);
+      await interruptCodexSteering(interruptWorkingCodex, closeMention(text), { agent: beforeEnter.identity.agent, working: beforeEnter.working, screen: beforeEnter.screen }, {
+        read: async () => {
+          const current = await pendingContext(owner, paneId, lease, identity, true);
+          statusAtRead = pending.current(paneId);
+          return { agent: current.identity.agent, working: current.working, screen: current.screen };
+        },
+        restarting: () => committing(true, true),
+        // herdr has no compare-and-send: the screen can change between this read and the write, so the
+        // write is refused when the lease, the deadline or the pane's status moved meanwhile
+        escape: (fresh) => paneSendKeys(paneId, ["Escape"], undefined, () => allowed() && fresh() && pending.current(paneId) === statusAtRead),
+      });
       noteSubmitted(paneId, text);
       return { ok: true };
     } catch (error) {
@@ -902,9 +913,9 @@ export function createServer(
       return { ok: false, ...fault };
     }
   }
-  async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number): Promise<SubmitReply> {
+  async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number, interruptWorkingCodex = false): Promise<SubmitReply> {
     const reply = await dispatchPendingText(item.owner, item.paneId, item.message.text, item.lease, item.identity,
-      automatic, arrivedAt, (working) => pending.committing(item, working));
+      automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex);
     pending.settle(item, reply.ok ? undefined : { code: reply.code!, message: reply.message! }, reply.code === "submit_changed",
       automatic && ["pending_wait", "agent_blocked"].includes(reply.code ?? ""));
     return reply;
@@ -1772,12 +1783,17 @@ export function createServer(
         const auth: HealthAuth = access.level === "full"
           ? { required: false, authenticated: true, via: access.via, role: access.role }
           : { required: true, authenticated, ...(authenticated ? {} : { reason: access.reason }) };
+        // this server is open to the network with no token and nothing paired, told to a client
+        // that got in and to nobody else: naming it to an anonymous caller would be
+        // reconnaissance, not help. Nothing here changes who is let in (server/access.ts).
+        const lan_exposure = access.level === "full" && lanExposed({ hostname, tokenConfigured: token !== "", gated: devices.gated })
+          ? { host: hostname } : undefined;
         if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL });
         try {
           const info = await ping();
           // a forced answer (tests) and a runtime without the PTY sidecar are told the way a Windows herdr's own would be
           const herdr = attachableIdentity(info, sidecar);
-          return jsonResponse({ ok: true, herdr, auth,
+          return jsonResponse({ ok: true, herdr, auth, ...(lan_exposure ? { lan_exposure } : {}),
             web_ui: { boot_id: process.env["HERDR_WEB_BOOT_ID"] ?? null, revision: process.env["HERDR_WEB_REVISION"] ?? null } });
         } catch (error) {
           return errorResponse(error);
@@ -3160,7 +3176,7 @@ export function createServer(
                   await pendingContext(client, item.paneId, lease!, item.identity);
                   if (!pending.claim(item, false)) return { ok: false, code: "pending_busy", message: "This message is already being sent" };
                   item.lease = lease!;
-                  return dispatchPending(item, false, arrivedAt);
+                  return dispatchPending(item, false, arrivedAt, true);
                 });
                 result(answer);
                 drainPending(message.pane_id);
@@ -3262,7 +3278,7 @@ if (import.meta.main) {
   process.on("SIGINT", shutdown);
   if (process.env["HERDR_WEB_MANAGED"] === "1") process.on("disconnect", shutdown);
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
-  if (!LOOPBACK_HOSTNAMES.has(instance.hostname)) {
+  if (!isLoopbackBind(instance.hostname)) {
     if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "") {
       console.error(
         `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
