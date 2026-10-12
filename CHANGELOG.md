@@ -53,6 +53,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
 
 ### Fixed
+- One paste, pick or drop attaches up to 20 files instead of silently keeping the first four, and
+  the message box says how many it left out. **Settings → Chat → Files at once** sets the number
+  for the device, from 1 to 50.
 - Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 

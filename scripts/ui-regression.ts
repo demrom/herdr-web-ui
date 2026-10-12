@@ -1196,6 +1196,42 @@ try {
   assert.equal(await composer.inputValue(), "draft for B");
   console.log("PASS upload batch cannot cross panes");
 
+  // One pick takes as many files as Settings → Chat → Files at once says, and says what it left out.
+  await page.unroute("**/api/pane/image");
+  const limitedUploads: string[] = [];
+  await page.route("**/api/pane/image", async (route) => {
+    limitedUploads.push(route.request().postDataJSON().pane_id);
+    await route.continue();
+  });
+  const setAttachLimit = async (from: number, to: number) => {
+    await page.keyboard.press("ControlOrMeta+Shift+Comma");
+    await openSettingsPage(page, "Chat");
+    const button = page.getByRole("button", { name: to < from ? "Attach fewer files at once" : "Attach more files at once", exact: true });
+    for (let step = 0; step < Math.abs(from - to); step += 1) await button.click();
+    assert.equal(await page.getByRole("group", { name: "Files at once", exact: true }).locator("output").textContent(), String(to));
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+  };
+  const ready = page.locator(".composer-attachment.is-ready");
+  const readyBefore = await ready.count();
+  await page.locator('input[type="file"]').setInputFiles(["a", "b", "c", "d", "e", "f"].map((name) => ({ name: `${name}.png`, mimeType: "image/png", buffer: png })));
+  await until(async () => (await ready.count()) === readyBefore + 6, "six attachments uploaded at the default limit");
+  assert.deepEqual(limitedUploads, Array(6).fill(paneB), "every picked file is uploaded at the default limit");
+  assert.equal(await page.getByRole("alert").filter({ hasText: /Attached \d+ of \d+ files/ }).count(), 0, "nothing was left out");
+  limitedUploads.length = 0;
+  await setAttachLimit(20, 2);
+  // the first file is over the size limit: its error and the count left out both stay in the note
+  await page.locator('input[type="file"]').setInputFiles([
+    { name: "huge.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(8 * 1024 * 1024 + 1) },
+    ...["one", "two"].map((name) => ({ name: `${name}.png`, mimeType: "image/png", buffer: png })),
+  ]);
+  await until(async () => (await ready.count()) === readyBefore + 7, "the file within both limits uploaded");
+  const note = page.getByRole("alert").filter({ hasText: "Too large to attach: huge.bin" });
+  await note.waitFor();
+  assert.match(await note.innerText(), /Attached 2 of 3 files/);
+  assert.deepEqual(limitedUploads, [paneB], "only the files within the limit are uploaded");
+  await setAttachLimit(2, 20);
+  console.log("PASS one pick attaches up to the chosen number of files and names what it left out");
+
   let releaseCreate!: () => void;
   const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
   releases.push(releaseCreate);

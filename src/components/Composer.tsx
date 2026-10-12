@@ -81,7 +81,6 @@ export interface ComposerProps {
   onUploadImage: (file: File) => Promise<string>;
 }
 
-const MAX_IMAGES_PER_ACTION = 4;
 /**
  * Any file can be attached (an icon, a PDF, a log): the server stores it beside the pane
  * and the message mentions its path. These image types also get a thumbnail.
@@ -648,7 +647,7 @@ export function Composer({
 
   const uploadImages = useCallback(
     async (incoming: readonly File[]) => {
-      const images = incoming.slice(0, MAX_IMAGES_PER_ACTION);
+      const images = incoming.slice(0, settings.attachLimit);
       if (images.length === 0) return;
 
       const added = images.map<Attachment>((file) => ({
@@ -659,7 +658,10 @@ export function Composer({
         state: "uploading",
       }));
       setAttachments((current) => [...current, ...added]);
-      setNote(null);
+      const leftOut = images.length < incoming.length
+        ? t("Attached {count} of {total} files. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
+        : null;
+      setNote(leftOut);
 
       for (const attachment of added) {
         if (!mounted.current) break;
@@ -677,11 +679,12 @@ export function Composer({
           setAttachments((current) =>
             current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
           );
-          setNote(error instanceof Error ? error.message : String(error));
+          const failed = error instanceof Error ? error.message : String(error);
+          setNote(leftOut ? `${failed} ${leftOut}` : failed);
         }
       }
     },
-    [insertMentionAtCursor, onUploadImage],
+    [insertMentionAtCursor, onUploadImage, settings.attachLimit, t],
   );
 
   const removeAttachment = useCallback((attachment: Attachment) => {
