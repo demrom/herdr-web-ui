@@ -5,7 +5,7 @@
  * `--term-*` tokens of each theme for PaneTerminal's theme object.
  */
 
-import { REPORTED_SETTINGS, type ReportedSetting } from "../../shared/telemetry.ts";
+import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
@@ -65,6 +65,9 @@ export interface Settings {
   /** This device's terminal keys, sticky modifiers and exact chords, in display order. */
   keyBarItems: KeyBarItem[];
   shortcutOverrides: ShortcutOverrides;
+  pageOverlapRows: number;
+  /** Plain page keys scroll chat, including while its composer is focused. */
+  chatPageKeys: boolean;
   theme: ThemeSetting;
   density: Density;
   /** How much a workspace row says: its name, or its pane's title over its place. */
@@ -164,9 +167,74 @@ export interface Settings {
 export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
 export type MarkdownWidth = (typeof MARKDOWN_WIDTHS)[number];
 
-/** The appearance settings that differ from their defaults, by name: what the anonymous counts tell (shared/telemetry.ts). */
-export function changedSettings(settings: Settings): ReportedSetting[] {
-  return REPORTED_SETTINGS.filter((name) => settings[name] !== DEFAULT_SETTINGS[name]);
+/** Raw custom text, key combinations and account keys are never copied. Requiring every other
+ * Settings field in the projection makes a new field require an explicit collection decision. */
+type TelemetrySourceSettings = Omit<Settings,
+  "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
+  | "quickReplies" | "usageOrder" | "usageHidden">;
+
+/** Compare structured custom settings by content against this app's built-in defaults. */
+function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
+  return JSON.stringify(value) !== JSON.stringify(defaultValue);
+}
+
+/** Full allowlisted snapshot. Text and account-key values are only used for safe summaries. */
+export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings & TelemetrySourceSettings {
+  return {
+    terminalInputMode: settings.terminalInputMode,
+    theme: settings.theme,
+    density: settings.density,
+    sidebarRows: settings.sidebarRows,
+    agentOrder: settings.agentOrder,
+    agentCards: settings.agentCards,
+    agentPins: settings.agentPins,
+    quietOpenedDone: settings.quietOpenedDone,
+    agentMarks: settings.agentMarks,
+    palette: settings.palette,
+    terminalFontSize: settings.terminalFontSize,
+    terminalCursorStyle: settings.terminalCursorStyle,
+    terminalCursorBlink: settings.terminalCursorBlink,
+    terminalWheelSpeed: settings.terminalWheelSpeed,
+    paneClipboard: settings.paneClipboard,
+    releasePaneAway: settings.releasePaneAway,
+    narrowPaneFont: settings.narrowPaneFont,
+    chatFontSize: settings.chatFontSize,
+    chatWidth: settings.chatWidth,
+    enterSends: settings.enterSends,
+    autoSendQueued: settings.autoSendQueued,
+    showThinking: settings.showThinking,
+    keepScreenOn: settings.keepScreenOn,
+    language: settings.language,
+    alertsOn: settings.alertsOn,
+    alertInput: settings.alertInput,
+    alertDone: settings.alertDone,
+    alertInApp: settings.alertInApp,
+    alertSound: settings.alertSound,
+    showQuickReplies: settings.showQuickReplies,
+    showSuggestionChip: settings.showSuggestionChip,
+    showUsage: settings.showUsage,
+    usageCount: settings.usageCount,
+    usagePace: settings.usagePace,
+    usageGlance: settings.usageGlance,
+    defaultView: settings.defaultView,
+    voiceInput: settings.voiceInput,
+    voiceLanguage: settings.voiceLanguage,
+    voicePolishChat: settings.voicePolishChat,
+    voicePolishTerminal: settings.voicePolishTerminal,
+    wrapCode: settings.wrapCode,
+    highlightCode: settings.highlightCode,
+    markdownWidth: settings.markdownWidth,
+    terminalFontCustom: settings.terminalFontFamily !== DEFAULT_SETTINGS.terminalFontFamily,
+    chatFontCustom: settings.chatFontFamily !== DEFAULT_SETTINGS.chatFontFamily,
+    shortcutsCustom: differsFromDefault(settings.shortcutOverrides, DEFAULT_SETTINGS.shortcutOverrides),
+    keyBarCustom: differsFromDefault(settings.keyBarItems, DEFAULT_SETTINGS.keyBarItems)
+      || differsFromDefault(settings.keyBarExtras, DEFAULT_SETTINGS.keyBarExtras),
+    quickRepliesCustom: differsFromDefault(settings.quickReplies, DEFAULT_SETTINGS.quickReplies),
+    quickReplyCount: settings.quickReplies.length,
+    usageHiddenCount: settings.usageHidden.length,
+    pageOverlapRows: settings.pageOverlapRows,
+    chatPageKeys: settings.chatPageKeys,
+  };
 }
 
 /**
@@ -179,7 +247,7 @@ export const SETTING_SCOPE = {
   agentPins: "shared", agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showSuggestionChip: "shared", showUsage: "shared", usageCount: "shared", usagePace: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", highlightCode: "shared", defaultView: "device",
-  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", density: "device",
+  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", pageOverlapRows: "device", chatPageKeys: "device", density: "device",
   quietOpenedDone: "device", terminalFontSize: "device", terminalCursorStyle: "device", terminalCursorBlink: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
   narrowPaneFont: "device", chatFontSize: "device", chatFontFamily: "device", chatWidth: "device", enterSends: "device",
@@ -199,6 +267,8 @@ export const DEFAULT_SETTINGS: Settings = {
   keyBarExtras: ["alt"],
   keyBarItems: DEFAULT_KEY_BAR_ITEMS,
   shortcutOverrides: {},
+  pageOverlapRows: 1,
+  chatPageKeys: false,
   theme: "dark",
   density: "comfortable",
   sidebarRows: "two",
@@ -360,6 +430,9 @@ export function sanitizeSettings(raw: unknown): Settings {
     keyBarExtras,
     keyBarItems: sanitizeKeyBarItems(record["keyBarItems"], keyBarFallback),
     shortcutOverrides: sanitizeShortcutOverrides(record["shortcutOverrides"]),
+    chatPageKeys: typeof record["chatPageKeys"] === "boolean" ? record["chatPageKeys"] : DEFAULT_SETTINGS.chatPageKeys,
+    pageOverlapRows: typeof record["pageOverlapRows"] === "number" && Number.isFinite(record["pageOverlapRows"])
+      ? Math.min(100, Math.max(0, Math.round(record["pageOverlapRows"]))) : DEFAULT_SETTINGS.pageOverlapRows,
     theme: theme === "dark" || theme === "light" || theme === "system" ? theme : DEFAULT_SETTINGS.theme,
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,

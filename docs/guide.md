@@ -470,9 +470,11 @@ This is for Linux and macOS. On Windows, and for a remote PC, update herdr on th
 
 ## Anonymous usage counts
 
-The app tells its maintainer how many installs there are, which versions they run, which countries they are in and which appearance settings people change from their defaults, and nothing else. It sends one small message when it is first installed and one each time it runs a new version, never in between. The first time you open the app, a line under the header says so, with **What is sent** and **Turn off**. Nothing is sent before that line has been shown, and the first message waits ten minutes after it, so **Turn off** on that line stops it. An install that saw the line before it mentioned the settings sees it once more, and sends nothing until then.
+The app tells its maintainer how many installs there are, which versions they run, which countries the messages come from and which app settings people choose. It sends one message when it is first installed and one each time it runs a new version, never in between. The first time you open the app, a line under the header says so, with **What is sent** and **Turn off**. Nothing is sent before that line has been shown, and the first message waits ten minutes after it, so **Turn off** on that line stops it. An install that saw an older notice sees the expanded-settings notice once more, and sends nothing until then. An existing choice to turn counts off stays off.
 
-A message holds the event (`install` or `update`), a random ID made on this PC, the app's version and the version an update replaced, the OS and CPU architecture, how the app was installed (herdr plugin, `bun run start`, or `bun run server`), and the names of the appearance settings changed from their defaults in the browser that last opened the app: theme, density, colors, sidebar rows, Agents order, workspace cards, pin agents, plan flow and the plan count in the header. It holds the names only, never what a setting is set to, and never a setting you type (a font, a shortcut, the key bar). Nothing about your terminals, agents, files, workspaces or accounts is in it. The receiver ([`telemetry/`](../telemetry/README.md)) keeps those fields, the day and the country the message came from (two letters, such as `KR`, worked out by its host from the connection), and never stores your IP address or anything finer than the country.
+A message holds the event (`install` or `update`), a random ID made on this PC, the app's version and the version an update replaced, the OS and CPU architecture, how the app was installed (herdr plugin, `bun run start`, or `bun run server`), and an allowlisted `settings` snapshot. The snapshot contains actual choices for appearance, terminal and chat behavior, notifications, language, voice controls, usage-meter display and the file viewer, including defaults. Custom fonts, shortcuts, key-bar layouts and quick replies are represented by customization flags, not their text or key combinations; quick replies and hidden usage accounts also have counts. Account identifiers and ordering, paths, addresses, credentials, commands, terminal content, conversations and files are not collected.
+
+The snapshot is the last one a browser reported to this server, not a list of devices or a complete picture of a person. Changing a setting updates that local snapshot but does not send another telemetry event. Before a browser reports, `settings` is `null`. The receiver ([`telemetry/`](../telemetry/README.md)) keeps the event fields, the day and the country the message came from (two letters, such as `KR`, worked out by its host from the connection), and never stores your IP address or anything finer than the country. The random install ID and settings can link events from an installation; they do not guarantee anonymity.
 
 **Settings → About → Anonymous usage counts** shows the next message exactly as it would be sent, and its switch turns the counts off for this PC. `HERDR_WEB_TELEMETRY=0` or `DO_NOT_TRACK=1` in the server's environment turns them off whatever the switch says, and they are always off in CI. A remote PC's bridge sends nothing.
 
@@ -484,6 +486,7 @@ A message holds the event (`install` or `update`), a random ID made on this PC, 
 | --- | --- |
 | `Mod+Shift+K` | Command palette |
 | `Mod+Shift+J` | Switch Chat / Terminal |
+| `Mod+Shift+PageUp` / `PageDown` | Scroll the current pane up / down, retaining the configured overlap |
 | `Mod+Shift+B` | Toggle sidebar |
 | `Mod+Shift+O` | New workspace (`Mod+Shift+N` too, in the installed app: a Chrome tab keeps `Ctrl+Shift+N` for an incognito window) |
 | `Mod+Shift+↑` / `↓` | Previous / next pane |
@@ -500,11 +503,33 @@ composing, keys stay with it. In a text field with text, Mod+Shift+arrows keep t
 behavior; from an empty one, such as the chat's empty message box, they switch panes.
 List and tab controls also have focus-local keys; those do not become global terminal shortcuts.
 On a focused tab, Alt+Shift+Left/Right reorders it and Shift+F10 opens its menu. On the terminal
-scrollbar, arrows move a line, Page Up/Down a viewport, and Home/End the start/end of history.
+scrollbar, arrows move a line, Page Up/Down a viewport minus the configured overlap, and Home/End the start/end of history.
 
 On a phone, use the header and More menu for app actions; Command palette is available there
 without a shortcut. The terminal key bar is configured separately under **Settings → Terminal**.
 An external keyboard uses the same app bindings as a desktop.
+
+**Settings → Chat → Composer → PageUp / PageDown scroll chat** opts into plain page keys
+for the transcript, even while its message box is focused. It is off by default and saved on
+this device; the draft, caret, selection and focus stay intact. Modified page keys, composition,
+other editable controls and modal input retain their own behavior. Plain terminal page keys
+continue to belong to the running program.
+
+Paging shortcuts work while the message box is focused, preserving the draft, caret and selection.
+Chat scrolls its transcript immediately; Terminal scrolls herdr's shared history, so other
+clients see the same terminal position. When herdr explicitly reports zero native history,
+the shortcut instead sends plain PageUp/PageDown to the running application through its live
+input lease. That application owns its page length; the overlap setting cannot change it.
+Unavailable or invalid history data never causes application input, and no key is queued
+while disconnected.
+**Settings → Shortcuts → Paging → Page overlap** sets the lines retained between pages:
+one by default, from 0 to 100; 0 scrolls a full viewport. Chat uses the displayed text's line
+height, and Terminal uses native rows. A large overlap still advances by at least one pixel
+in chat or one terminal row. Focused scrollbar PageUp/PageDown uses the same setting.
+For an iPad with an external keyboard that lacks PageUp/PageDown, assign letters such as
+U and D to **Scroll pane up** and **Scroll pane down** in Settings → Shortcuts. Mod+Shift
+stays fixed. This lets you read history without leaving the message box or reaching for
+the screen. Shift+PageUp/PageDown alone retains the focused control's own behavior.
 
 Enter sends and Shift+Enter adds a line. Settings can switch sending to Mod+Enter.
 

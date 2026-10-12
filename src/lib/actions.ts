@@ -9,12 +9,18 @@ import type { ZoomMode } from "./layoutMap.ts";
 
 export type PaneView = "chat" | "terminal";
 
+/** The selected pane’s mounted history, bound to its PC. */
+export interface PaneControls {
+  scrollPage: (direction: -1 | 1) => void;
+}
+
 export interface AppActions {
   selectPane: (paneId: string) => void;
   /** the previous/next pane in sidebar order; wraps around */
   selectAdjacentPane: (direction: -1 | 1) => void;
   setView: (view: PaneView) => void;
   toggleView: () => void;
+  scrollPage: (direction: -1 | 1) => void;
   openNewSession: () => void;
   /**
    * The New tab dialog for a workspace: the named one (a sidebar row's menu, on its own PC),

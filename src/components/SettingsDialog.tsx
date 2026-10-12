@@ -222,6 +222,9 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("Composer")} section="composer">
+        <SettingsRow label={t("PageUp / PageDown scroll chat")} description={t("Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.")}>
+          <Toggle label={t("PageUp / PageDown scroll chat")} checked={settings.chatPageKeys} onChange={(chatPageKeys) => update({ chatPageKeys })} />
+        </SettingsRow>
         <SettingsRow label={t("Enter sends")} description={t("When off, Mod+Enter sends")}>
           <Toggle label={t("Enter sends")} checked={settings.enterSends} onChange={(enterSends) => update({ enterSends })} />
         </SettingsRow>
@@ -600,7 +603,7 @@ function IntegrationRow({ integration }: { integration: AgentIntegration }) {
   );
 }
 
-const SHORTCUT_KEYS: readonly string[] = [..."abcdefghijklmnopqrstuvwxyz0123456789,", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+const SHORTCUT_KEYS: readonly string[] = [..."abcdefghijklmnopqrstuvwxyz0123456789,", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown"];
 
 function ShortcutsPage() {
   const { settings, update } = useSettings();
@@ -641,6 +644,11 @@ function ShortcutsPage() {
       <div className="settings-actions">
         <button type="button" className="btn" onClick={() => update({ shortcutOverrides: {} })}>{t("Reset shortcuts")}</button>
       </div>
+      <SettingsGroup title={t("Paging")} section="paging">
+        <SettingsRow label={t("Page overlap")} description={t("Lines kept visible between pages in chat and terminal history. Zero scrolls a full page.")}>
+          <Stepper label={t("Page overlap")} value={settings.pageOverlapRows} text={String(settings.pageOverlapRows)} min={0} max={100} decreaseLabel={t("Decrease page overlap")} increaseLabel={t("Increase page overlap")} onChange={(pageOverlapRows) => update({ pageOverlapRows })} />
+        </SettingsRow>
+      </SettingsGroup>
     </>
   );
 }

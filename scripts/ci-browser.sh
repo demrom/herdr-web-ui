@@ -59,10 +59,13 @@ run_script scripts/demo-build.ts "$HERDR_DEMO_BUILD"
 run_script scripts/ui-regression.ts
 run_script scripts/workspace-rows-regression.ts
 run_script scripts/pending-pane-switch-regression.ts
+run_script scripts/lan-exposure-notice-regression.ts
 run_script scripts/terminal-dispose-browser-qa.ts
 run_script scripts/sticky-modifiers-regression.ts
 run_script scripts/terminal-arrows-clicks-regression.ts
 run_script scripts/terminal-viewport-regression.ts
+run_script scripts/application-paging-regression.ts
+run_script scripts/pane-paging-demo-regression.ts
 run_script scripts/key-bar-customization-demo-regression.ts
 run_script scripts/key-bar-hold-repeat-regression.ts
 run_script scripts/settings-pages-demo-regression.ts

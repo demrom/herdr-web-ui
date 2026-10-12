@@ -59,7 +59,7 @@ import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { invokedSkill } from "./skill-activity.ts";
-import { agentTaskResult, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
+import { agentTaskResult, claudePeerId, claudePeerNotice, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
 import { forgetSubagents, lineNotifications, subagentDetails, taskNotification, type SubagentDetail } from "./claude-subagents.ts";
 
 export { isOmoProcess } from "./omo.ts";
@@ -294,6 +294,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
   const markPromptAnswered = (): void => {
     if (lastPrompt !== null) lastPrompt.answered = true;
   };
+  // another session's deliveries seen in this text, by sender and message id: an echo is no second notice
+  const peersSeen = new Set<string>();
 
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
@@ -303,7 +305,16 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     } catch {
       continue; // a torn tail line while Claude is mid-append
     }
-    if (entry === null || typeof entry !== "object" || entry.isMeta) continue;
+    if (entry === null || typeof entry !== "object") continue;
+    // another session's message: its own turn, so the work it started is not appended to the answer before it
+    const peer = claudePeerNotice(entry);
+    if (peer !== null) {
+      const id = claudePeerId(entry);
+      if (id !== null) { if (peersSeen.has(id)) continue; peersSeen.add(id); }
+      turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [peer] });
+      continue;
+    }
+    if (entry.isMeta) continue;
     if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); lastPrompt = null; continue; }
     const content = entry.message?.content;
     // a compaction's summary marks where the conversation was folded, readable on request
@@ -642,6 +653,8 @@ function applyHistoryBoundary(path: string, stream: TranscriptStream, source: Re
 }
 
 /** Bytes that every line opening a turn contains: a cheap filter before JSON.parse. */
+/** the mark of another session's message in a Claude record, in either of its forms (claudePeerNotice) */
+const PEER_MARK = Buffer.from('"kind":"peer"');
 const TURN_MARK: Record<StreamSource, Buffer> = {
   "grok-transcript": Buffer.from('"user_message_chunk"'),
   "agy-transcript": Buffer.from('"USER_INPUT"'),
@@ -668,6 +681,8 @@ function opensTurn(source: StreamSource, line: string): boolean {
     const message = piMessage(entry);
     return message?.role === "user" && (message.content as Record<string, unknown>[]).some((part) => part.type === "text" && typeof part.text === "string" && part.text.length > 0);
   }
+  // another session's message opens a turn in either of its forms, the meta entry and the queued attachment
+  if (claudePeerNotice(entry) !== null) return true;
   if (entry.type !== "user" || entry.isMeta || entry.isCompactSummary) return false;
   const content = entry.message?.content;
   if (typeof content === "string") return !isCommandEntry(content);
@@ -691,13 +706,21 @@ function turnStarts(bytes: Buffer, source: StreamSource, chain: PromptChain = { 
     const end = newline === -1 ? bytes.length : newline;
     const line = bytes.subarray(offset, end);
     if (source === "claude-transcript" && line.includes('"type":"assistant"')) chain.answered = true;
-    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) {
+    // a queued attachment carrying another session's message has no "user" in it: its own mark
+    const candidate = line.includes(TURN_MARK[source]) || (source === "claude-transcript" && line.includes(PEER_MARK));
+    if (candidate && opensTurn(source, line.toString("utf8"))) {
       if (source === "claude-transcript") {
         let parent: string | null = null;
+        let peer = false;
         try {
-          const uuid: unknown = (JSON.parse(line.toString("utf8")) as TranscriptEntry | null)?.parentUuid;
+          const entry = JSON.parse(line.toString("utf8")) as TranscriptEntry | null;
+          const uuid: unknown = entry?.parentUuid;
           parent = typeof uuid === "string" ? uuid : null;
+          peer = claudePeerNotice(entry) !== null;
         } catch { /* opensTurn already read the line as JSON */ }
+        // another session's message is never a re-send of this session's prompt: it opens a turn and
+        // leaves the prompt chain as it was, so the human re-send rule below still sees its own prompts
+        if (peer) { starts.push(offset); offset = end + 1; continue; }
         // a re-send of an unanswered prompt opens no turn of its own
         if (chain.answered || parent === null || parent !== chain.parent) starts.push(offset);
         chain.parent = parent;

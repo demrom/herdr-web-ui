@@ -70,8 +70,10 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         Update POSTs require X-Herdr-Update: 1, same-origin browser requests,
  *         and the usual token gate. Managed starts only; status is polled during restart.
  *  GET    /api/telemetry                 -> TelemetryStatus (shared/telemetry.ts), no-store
- *  POST   /api/telemetry                 -> TelemetryStatus; body { enabled?, notice_seen?: true, changed_settings? },
- *         X-Herdr-Update: 1 and same-origin. 404 from a server that sends no telemetry.
+ *  POST   /api/telemetry                 -> TelemetryStatus; TelemetryChange (shared/telemetry.ts):
+ *         { enabled?, notice_seen?: true, notice_version?, settings? }. A notice acknowledgement
+ *         requires the current NOTICE_VERSION. X-Herdr-Update: 1 and same-origin.
+ *         404 from a server that sends no telemetry.
  *  GET    /api/agents                    -> { agents: AgentKind[] } (herdr's agent manifests: the
  *         kinds `agent.start` accepts, plus omo and gjc when they are on this server's PATH,
  *         for the new-session dialog)
@@ -313,6 +315,20 @@ export interface HealthAuth {
   readonly via?: AccessVia;
   readonly role?: DeviceRole;
   readonly reason?: AccessRefusal;
+}
+
+/**
+ * GET /api/health, authenticated requests only: this server answers on an address beyond this
+ * PC while no access token is set and no device has ever been paired, so anything that can
+ * reach that address is let in (`open` in `server/access.ts`). It is a warning, never a gate:
+ * nothing about who is let in changes because this field exists.
+ *
+ * Never sent to a request that did not get in. "This host runs herdr-web-ui with no token"
+ * is reconnaissance for whoever is asking, not help.
+ */
+export interface LanExposure {
+  /** the address the server is bound to, so the warning can name where it is reachable */
+  readonly host: string;
 }
 
 export interface PairedDevice {
