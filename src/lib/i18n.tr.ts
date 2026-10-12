@@ -91,7 +91,7 @@ export const TR: Record<string, string> = {
   "How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.": "Bir yapıştırma, seçim veya bırakmanın eklediği dosya sayısı. Kalanlar eklenmez ve mesaj kutusu kaç tane olduğunu söyler.",
   "Attach fewer files at once": "Tek seferde daha az dosya ekle",
   "Attach more files at once": "Tek seferde daha fazla dosya ekle",
-  "Attached {count} of {total} files. Settings → Chat → Files at once sets how many one paste, pick or drop takes.": "{total} dosyanın {count} tanesi eklendi. Bir yapıştırma, seçim veya bırakmanın kaç dosya ekleyeceğini Ayarlar → Sohbet → Tek seferde dosya belirler.",
+  "Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.": "{total} dosyadan yalnızca ilk {count} tanesi alındı. Ayarlar → Sohbet → Bir seferde dosya sayısı, bir yapıştırma, seçme veya sürükleyip bırakmada kaç dosya alınacağını belirler.",
   "Suggestion chip": "Öneri düğmesi",
   "On a touch screen, a chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.": "Dokunmatik ekranda mesaj kutusunun üstündeki çip, Claude Code'un sıradaki olarak önerdiği istemi kutuya yerleştirir. Klavyede bunu Tab yapar.",
   "Chat": "Sohbet",

@@ -659,7 +659,7 @@ export function Composer({
       }));
       setAttachments((current) => [...current, ...added]);
       const leftOut = images.length < incoming.length
-        ? t("Attached {count} of {total} files. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
+        ? t("Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
         : null;
       setNote(leftOut);
 

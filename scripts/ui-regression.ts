@@ -1216,7 +1216,7 @@ try {
   await page.locator('input[type="file"]').setInputFiles(["a", "b", "c", "d", "e", "f"].map((name) => ({ name: `${name}.png`, mimeType: "image/png", buffer: png })));
   await until(async () => (await ready.count()) === readyBefore + 6, "six attachments uploaded at the default limit");
   assert.deepEqual(limitedUploads, Array(6).fill(paneB), "every picked file is uploaded at the default limit");
-  assert.equal(await page.getByRole("alert").filter({ hasText: /Attached \d+ of \d+ files/ }).count(), 0, "nothing was left out");
+  assert.equal(await page.getByRole("alert").filter({ hasText: /the first \d+ of \d+ files/ }).count(), 0, "nothing was left out");
   limitedUploads.length = 0;
   await setAttachLimit(20, 2);
   // the first file is over the size limit: its error and the count left out both stay in the note
@@ -1227,7 +1227,7 @@ try {
   await until(async () => (await ready.count()) === readyBefore + 7, "the file within both limits uploaded");
   const note = page.getByRole("alert").filter({ hasText: "Too large to attach: huge.bin" });
   await note.waitFor();
-  assert.match(await note.innerText(), /Attached 2 of 3 files/);
+  assert.match(await note.innerText(), /the first 2 of 3 files were taken/);
   assert.deepEqual(limitedUploads, [paneB], "only the files within the limit are uploaded");
   await setAttachLimit(2, 20);
   console.log("PASS one pick attaches up to the chosen number of files and names what it left out");

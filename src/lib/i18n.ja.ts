@@ -93,7 +93,7 @@ export const JA: Record<string, string> = {
   "How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.": "1 回の貼り付け、選択、ドロップで添付するファイルの数です。残りは添付されず、何件かをメッセージ欄に表示します。",
   "Attach fewer files at once": "一度に添付するファイルを減らす",
   "Attach more files at once": "一度に添付するファイルを増やす",
-  "Attached {count} of {total} files. Settings → Chat → Files at once sets how many one paste, pick or drop takes.": "{total} 件中 {count} 件のファイルを添付しました。1 回の貼り付け、選択、ドロップで添付する数は 設定 → チャット → 一度に添付するファイル数 で変えられます。",
+  "Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.": "{total} 個のファイルのうち先頭の {count} 個だけを受け取りました。設定 → チャット → 一度に添付するファイル数で、貼り付け・選択・ドロップ 1 回に受け取る数を決めます。",
   "Suggestion chip": "提案チップ",
   "On a touch screen, a chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.": "タッチ画面では、入力欄の上のチップで Claude Code が次に提案するプロンプトを入力欄に入れます。キーボードでは Tab で入れます。",
   "Chat": "チャット",
