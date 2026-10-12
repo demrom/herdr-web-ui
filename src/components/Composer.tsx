@@ -116,6 +116,8 @@ type Attachment = {
   previewUrl: string;
   path: string | null;
   state: "uploading" | "ready" | "error";
+  /** what the pick this file came in with left out, repeated beside an upload error of the batch */
+  leftOut: string | null;
 };
 
 function readSlashUsage(): Record<string, number> {
@@ -644,8 +646,6 @@ export function Composer({
   const placedMentions = useRef(new Map<number, string>());
   /** finished uploads whose paths wait for a /command or an IME composition to end */
   const waitingMentions = useRef<{ id: number; path: string }[]>([]);
-  /** what the latest pick left out, so an upload error of its batch repeats it */
-  const batchNote = useRef<string | null>(null);
 
   const placeWaitingMentions = useCallback(() => {
     if (waitingMentions.current.length === 0) return;
@@ -714,7 +714,7 @@ export function Composer({
               current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
             );
             const failed = error instanceof Error ? error.message : String(error);
-            setNote(batchNote.current ? `${failed} ${batchNote.current}` : failed);
+            setNote(attachment.leftOut ? `${failed} ${attachment.leftOut}` : failed);
           },
         )
         .finally(() => {
@@ -729,19 +729,19 @@ export function Composer({
       const images = incoming.slice(0, settings.attachLimit);
       if (images.length === 0) return;
 
+      // the files left out of this pick: told now, and again beside an upload error of this batch
+      const leftOut = images.length < incoming.length
+        ? t("Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
+        : null;
       const added = images.map<Attachment>((file) => ({
         id: ++attachmentSequence,
         file,
         previewUrl: (PREVIEW_TYPES as readonly string[]).includes(file.type) ? URL.createObjectURL(file) : "",
         path: null,
         state: "uploading",
+        leftOut,
       }));
       setAttachments((current) => [...current, ...added]);
-      // the files left out of this pick: told now, and again beside an upload error of the batch
-      const leftOut = images.length < incoming.length
-        ? t("Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
-        : null;
-      batchNote.current = leftOut;
       setNote(leftOut);
       uploadQueue.current.push(...added);
       pumpUploads();
