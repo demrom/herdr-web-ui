@@ -236,6 +236,7 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
     usageHiddenCount: settings.usageHidden.length,
     pageOverlapRows: settings.pageOverlapRows,
     chatPageKeys: settings.chatPageKeys,
+    attachLimit: settings.attachLimit,
   };
 }
 
