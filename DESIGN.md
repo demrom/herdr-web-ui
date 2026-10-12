@@ -1132,8 +1132,11 @@ One set for both themes: the card is island black wherever it shows.
 - `/` completions come from `GET /api/pane/commands` and group built-in, user and project commands;
   `@` completions query `GET /api/pane/files`. Arrow keys navigate, Enter/Tab accepts, Escape closes.
 - Paste, picker or drag/drop accepts up to four files per action; an image is stored as a paste, any other
-  file under its own sanitised name. Each uploads through `POST /api/pane/image` and inserts a removable
-  editable `@path` mention.
+  file under its own sanitised name. Each uploads through `POST /api/pane/image`, three at a time
+  across all picks, and puts a removable editable `@path` mention at the start of the message (after
+  a leading `/command`), in the order the files were picked. A path waits while the box holds only a
+  `/command` still being typed or an IME composition. The caret and selection move only with the
+  text they sit in, so typing while files upload is not disturbed.
 - While a phone's keyboard is up, a tap on the transcript or a drag down it (`32px`) puts the
   keyboard away. Each only blurs the field, so the draft stays. The prompt card, which can stand
   where the transcript was on a short screen, does the same: a tap on its text (never on an

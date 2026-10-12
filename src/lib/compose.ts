@@ -71,22 +71,27 @@ export function imageMention(path: string): string {
 }
 
 /**
- * Puts a mention over the selection [start, end) as its own token: a space goes in
- * front when the text before it does not already end in whitespace, because the chat
- * and the agent only read `@path` after whitespace or at the start. The insertion is
- * cut to what still fits under MAX_COMPOSER_CHARS.
+ * Where an attached file's mention goes: at the start of the message, after a leading `/command`
+ * (it must stay first to be one), and after the mentions of files picked before it in the same
+ * batch that are still there, so a batch reads in pick order however its uploads finish. An upload
+ * finishes while the user may be typing, so the mention never goes where the caret is: the caller
+ * shifts the caret and selection by `length` when they sit at or after `at`. The insertion is cut
+ * to what still fits under MAX_COMPOSER_CHARS.
  */
-export function insertMention(
+export function insertLeadingMention(
   text: string,
-  start: number,
-  end: number,
   mention: string,
-): { text: string; caret: number } {
-  const before = text.slice(0, start);
+  earlier: readonly string[],
+): { text: string; at: number; length: number } {
+  let at = /^\/\S+\s*/u.exec(text)?.[0].length ?? 0;
+  for (const previous of earlier) {
+    const found = text.indexOf(previous);
+    if (found >= 0) at = Math.max(at, found + previous.length);
+  }
+  const before = text.slice(0, at);
   const snippet = before.length > 0 && !/\s$/u.test(before) ? ` ${mention}` : mention;
-  const room = Math.max(0, MAX_COMPOSER_CHARS - text.length + end - start);
-  const inserted = snippet.slice(0, room);
-  return { text: before + inserted + text.slice(end), caret: start + inserted.length };
+  const inserted = snippet.slice(0, Math.max(0, MAX_COMPOSER_CHARS - text.length));
+  return { text: before + inserted + text.slice(at), at, length: inserted.length };
 }
 
 /** Ready states affect the held-message hint only; sending always requires a user action. */
