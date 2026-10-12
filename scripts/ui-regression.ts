@@ -980,6 +980,8 @@ try {
   await page.reload(); await page.locator(".conn-live").waitFor();
   await until(async () => await page.locator(".composer-queue-text").count() === 3, "legacy held rows restored");
   assert.equal(await composer.inputValue(), "");
+  // the reloaded page shows the last status it had until the server's "working" lands
+  await page.locator('.composer-status[data-status="working"]').waitFor();
   assert.equal(await page.getByRole("button", { name: "Stop agent", exact: true }).count(), 1);
   assert.equal(await page.locator(".composer-action").count(), 1, "one primary action beside legacy recovery");
   // the held rows sit on the input card's column, under one caption that counts them
@@ -1356,6 +1358,34 @@ try {
   assert.deepEqual(selection, { text: "ell", direction: "backward" }, "the selection keeps its text and direction");
   await composer.fill("");
   console.log("PASS paths wait for a /command, typed or dictated, or an IME composition to finish, and selections keep their direction");
+
+  // A path that does not fit whole is never cut: it waits, its chip and the status line say how many
+  // characters to remove, Send is off, and the path goes in once there is room. The count of
+  // characters left shows only near the limit.
+  const MAX_COMPOSER_CHARS = 20_000; // src/lib/compose.ts; importing it would load the app's modules here
+  const statusHint = page.locator(".composer-status-hint");
+  const sendButton = page.getByRole("button", { name: "Send message", exact: true });
+  held.clear();
+  await composer.fill("x".repeat(MAX_COMPOSER_CHARS - 201));
+  assert.equal(await statusHint.count(), 0, "no count far from the limit");
+  await composer.fill("x".repeat(MAX_COMPOSER_CHARS - 5));
+  await until(async () => (await statusHint.textContent())?.includes("5 characters left") === true, "the count near the limit");
+  await pickFiles("fourteenth.txt");
+  await until(() => held.has("fourteenth.txt"), "fourteenth upload in flight");
+  await finish("fourteenth.txt");
+  const roomless = page.locator(".composer-attachment.is-no-room");
+  await roomless.waitFor();
+  assert.match(await roomless.innerText(), /No room/);
+  await until(async () => /No room for fourteenth\.txt: remove \d+ characters/.test(await statusHint.textContent() ?? ""), "the status line says how much to cut");
+  const short = Number(/remove (\d+) characters/.exec(await statusHint.textContent() ?? "")![1]);
+  assert.equal(await sendButton.isDisabled(), true, "Send waits for the path");
+  assert.equal(await composer.inputValue(), "x".repeat(MAX_COMPOSER_CHARS - 5), "no part of the path went in");
+  await composer.fill("x".repeat(MAX_COMPOSER_CHARS - 200));
+  await until(async () => /^@\S*fourteenth-\S* x+$/.test(await composer.inputValue()), "the path goes in once there is room");
+  assert.equal(short, /^@\S+ /.exec(await composer.inputValue())![0].length - 5, "the count was what the path needed");
+  assert.equal(await roomless.count(), 0, "the chip is attached again");
+  await composer.fill("");
+  console.log("PASS a path that does not fit waits whole and says how much to cut, and the count shows only near the limit");
 
   let releaseCreate!: () => void;
   const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });

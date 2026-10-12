@@ -112,12 +112,12 @@ describe("insertLeadingMention", () => {
 
   it("goes in whole or not at all: a cut path would name a file that does not exist", () => {
     const full = "x".repeat(MAX_COMPOSER_CHARS - 2);
-    expect(insertLeadingMention(full, first, [])).toEqual({ text: full, at: 0, length: 0 });
+    expect(insertLeadingMention(full, first, [])).toEqual({ text: full, at: 0, length: 0, missing: 10 });
     const room = "x".repeat(MAX_COMPOSER_CHARS - first.length);
     expect(insertLeadingMention(room, first, [])).toEqual({ text: `${first}${room}`, at: 0, length: first.length });
     // the separating space counts: after a command with no room for it, nothing goes in
     const command = `/review${"x".repeat(MAX_COMPOSER_CHARS - 7 - first.length)}`;
-    expect(insertLeadingMention(command, first, [])).toEqual({ text: command, at: command.length, length: 0 });
+    expect(insertLeadingMention(command, first, [])).toEqual({ text: command, at: command.length, length: 0, missing: 1 });
   });
 });
 
@@ -174,6 +174,15 @@ describe("composer presentation helpers", () => {
     expect(composerStatusHint({ uploading: true, connected: false, text: "" })).toBe("uploading");
     // with a draft the placeholder is gone: the reconnecting sentence is the one said (the tile says Uploading)
     expect(composerStatusHint({ uploading: true, connected: false, text: "draft" })).toBe("offline");
+  });
+
+  it("counts the characters left only near the limit, and puts a path with no room first", () => {
+    const near = "x".repeat(MAX_COMPOSER_CHARS - 200);
+    expect(composerStatusHint({ uploading: false, connected: true, text: "x".repeat(MAX_COMPOSER_CHARS - 201) })).toBe(null);
+    expect(composerStatusHint({ uploading: false, connected: true, text: near })).toBe("near-limit");
+    expect(composerStatusHint({ uploading: true, connected: true, text: near })).toBe("uploading");
+    expect(composerStatusHint({ uploading: true, connected: true, text: near, noRoom: true })).toBe("no-room");
+    expect(composerStatusHint({ uploading: false, connected: false, text: near, noRoom: true })).toBe("offline");
   });
 
   it("removes the effort word before shortening the model", () => {

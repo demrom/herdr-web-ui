@@ -784,7 +784,8 @@
   white-space: nowrap;
 }
 
-.composer-attachment.is-error {
+.composer-attachment.is-error,
+.composer-attachment.is-no-room {
   border-color: var(--status-blocked);
 }
 

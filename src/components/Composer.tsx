@@ -116,7 +116,9 @@ type Attachment = {
   file: File;
   previewUrl: string;
   path: string | null;
-  state: "uploading" | "ready" | "error";
+  state: "uploading" | "ready" | "error" | "no-room";
+  /** for "no-room": how many characters the message must lose for the path to fit */
+  missing?: number;
 };
 
 function readSlashUsage(): Record<string, number> {
@@ -306,6 +308,8 @@ export function Composer({
   /** a command the agent runs but the chat cannot finish, while it is what the box holds */
   const terminalOnly = useMemo(() => terminalOnlyCommand(agent, text), [agent, text]);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
+  /** a finished upload whose path waits for the message to be shortened: Send waits with it */
+  const roomless = attachments.find((attachment) => attachment.state === "no-room");
   const agentLabel = agentDisplayLabel(agent);
   // the agent's suggestion stands in the empty box as it does in its own input, until anything is typed
   const offered = connected && answerHint === null && suggestion !== null ? suggestion : null;
@@ -617,8 +621,8 @@ export function Composer({
 
   // an upload finishes while the user may be typing: its mention goes to the start (insertLeadingMention),
   // and the caret and selection only move along with the text they sit in, without taking focus
-  // `false` when the message has no room for the whole mention: nothing is written then
-  const insertMentionAtStart = useCallback((mention: string, earlier: readonly string[]): boolean => {
+  /** 0 once inserted; otherwise how many characters short the message is, and nothing changed */
+  const insertMentionAtStart = useCallback((mention: string, earlier: readonly string[]): number => {
     const element = textareaRef.current;
     const currentText = textRef.current;
     const selectionIsCurrent = element?.value === currentText;
@@ -626,7 +630,7 @@ export function Composer({
     const end = selectionIsCurrent ? (element.selectionEnd ?? start) : start;
     const direction = selectionIsCurrent ? (element.selectionDirection ?? undefined) : undefined;
     const next = insertLeadingMention(currentText, mention, earlier);
-    if (next.length === 0) return false;
+    if (next.missing !== undefined) return next.missing;
     const moved = (position: number) => (position >= next.at ? position + next.length : position);
     textRef.current = next.text;
     caretRef.current = moved(start);
@@ -635,7 +639,7 @@ export function Composer({
       setCaret(moved(start));
     });
     if (element) element.setSelectionRange(moved(start), moved(end), direction);
-    return true;
+    return 0;
   }, []);
 
   // one queue for the whole box: a pick made while another uploads waits its turn
@@ -643,7 +647,7 @@ export function Composer({
   const uploadsRunning = useRef(0);
   /** paths placed so far, by attachment id: ids follow pick order */
   const placedMentions = useRef(new Map<number, string>());
-  /** finished uploads whose paths wait for a /command or an IME composition to end */
+  /** finished uploads whose paths wait for a /command or an IME composition to end, or for room */
   const waitingMentions = useRef<{ id: number; path: string }[]>([]);
 
   const placeWaitingMentions = useCallback(() => {
@@ -655,10 +659,15 @@ export function Composer({
       if (removedAttachments.current.has(id)) continue;
       const mention = imageMention(path);
       const earlier = [...placedMentions.current].filter(([placed]) => placed < id).map(([, placed]) => placed);
-      // no room for the whole path: this attachment and the ones picked after it stay uploading, in
+      // no room for the whole path: this attachment and the ones picked after it stay waiting, in
       // their order, Send stays off, and the next edit of the text tries again (the effect below);
-      // a cut path would name a file that is not there
-      if (!insertMentionAtStart(mention, earlier)) { waitingMentions.current.push(...waiting.slice(index)); break; }
+      // a cut path would name a file that is not there, so the tile says how much to cut instead
+      const missing = insertMentionAtStart(mention, earlier);
+      if (missing > 0) {
+        waitingMentions.current.push(...waiting.slice(index));
+        setAttachments((current) => current.map((item) => (item.id === id ? { ...item, state: "no-room", missing } : item)));
+        break;
+      }
       placedMentions.current.set(id, mention);
       setAttachments((current) => current.map((item) => (item.id === id ? { ...item, path, state: "ready" } : item)));
     }
@@ -761,7 +770,7 @@ export function Composer({
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over */
   const send = useCallback((clearDraft?: string) => {
     if (composingRef.current) return;
-    if (!connected || uploading || sending || text.trim().length === 0) return;
+    if (!connected || uploading || roomless || sending || text.trim().length === 0) return;
     const sent = text;
     const sentAttachments = attachments;
     const settle = (result: boolean | string | DraftRefusal): void => {
@@ -790,7 +799,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, connected, dictation.forget, draftKey, onSend, sending, text, uploading]);
+  }, [attachments, connected, dictation.forget, draftKey, onSend, roomless, sending, text, uploading]);
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -888,7 +897,7 @@ export function Composer({
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
   const sendShown = composerSendShown({ working: isWorking, text });
-  const hint = composerStatusHint({ uploading, connected, text });
+  const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
   const usageDetail = usageWindows.map((window) => {
@@ -897,7 +906,10 @@ export function Composer({
   }).join("\n");
   const usageCaption = usageLimit === undefined ? "" : `${usageLimit.kind === "session" ? "5h" : windowLabel(usageLimit)} ${formatPercent(meterPercent(usageLimit, settings.usageCount))}`;
   const usageAccessible = usage === undefined ? "" : `${t("Subscription usage")}: ${usageName(usage)}, ${usageDetail.replaceAll("\n", ", ")}`;
-  const hintText = hint === null ? null : t(hint === "uploading" ? "Uploading file…" : "Reconnecting… message held here, never queued");
+  const hintText = hint === null ? null
+    : hint === "no-room" ? t("No room for {file}: remove {count} characters", { file: roomless?.file.name ?? "", count: roomless?.missing ?? 0 })
+    : hint === "near-limit" ? t("{count} characters left", { count: MAX_COMPOSER_CHARS - text.length })
+    : t(hint === "uploading" ? "Uploading file…" : "Reconnecting… message held here, never queued");
   const menuId = `composer-menu-${paneId}`;
   // the arrow keys move the selection, not the focus (it stays in the box), so the browser does not scroll to it
   useEffect(() => {
@@ -939,7 +951,7 @@ export function Composer({
           <TriangleAlert className="composer-note-icon" aria-hidden="true" />
           <span className="composer-note-text">{typeof note === "string" ? note : note.note}</span>
           {/* the draft named above, never what has replaced it since: the server checks */}
-          {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || sending || text.trim().length === 0}
+          {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
             onClick={() => send(note.draft)}>{t("Clear it and send")}</button>}
         </div>
       )}
@@ -1035,7 +1047,7 @@ export function Composer({
                 {attachment.previewUrl ? <img src={attachment.previewUrl} alt={attachment.file.name} />
                   : <span className="composer-attachment-file" title={attachment.file.name}><FileText aria-hidden="true" /><span>{attachment.file.name}</span></span>}
                 <span className="composer-attachment-state">
-                  {t(attachment.state === "uploading" ? "Uploading" : attachment.state === "error" ? "Failed" : "Attached")}
+                  {t(attachment.state === "uploading" ? "Uploading" : attachment.state === "error" ? "Failed" : attachment.state === "no-room" ? "No room" : "Attached")}
                 </span>
                 <button type="button" aria-label={t("Remove {file}", { file: attachment.file.name })} onClick={() => removeAttachment(attachment)}>
                   <X aria-hidden="true" />
@@ -1175,7 +1187,7 @@ export function Composer({
               className="composer-action composer-send"
               aria-label={t("Send message")}
               title={t("Send message")}
-              disabled={!connected || uploading || sending || text.trim().length === 0}
+              disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />

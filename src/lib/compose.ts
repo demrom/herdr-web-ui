@@ -77,13 +77,14 @@ export function imageMention(path: string): string {
  * finishes while the user may be typing, so the mention never goes where the caret is: the caller
  * shifts the caret and selection by `length` when they sit at or after `at`. The mention goes in
  * whole, with its separating space, or not at all (`length` 0): a cut `@path` would name a file
- * that does not exist, so the caller keeps the attachment waiting until there is room.
+ * that does not exist, so the caller keeps the attachment waiting until there is room; `missing`
+ * says how many characters the message is short of it.
  */
 export function insertLeadingMention(
   text: string,
   mention: string,
   earlier: readonly string[],
-): { text: string; at: number; length: number } {
+): { text: string; at: number; length: number; missing?: number } {
   let at = /^\/\S+\s*/u.exec(text)?.[0].length ?? 0;
   for (const previous of earlier) {
     const found = text.indexOf(previous);
@@ -91,7 +92,8 @@ export function insertLeadingMention(
   }
   const before = text.slice(0, at);
   const snippet = before.length > 0 && !/\s$/u.test(before) ? ` ${mention}` : mention;
-  if (text.length + snippet.length > MAX_COMPOSER_CHARS) return { text, at, length: 0 };
+  const missing = text.length + snippet.length - MAX_COMPOSER_CHARS;
+  if (missing > 0) return { text, at, length: 0, missing };
   return { text: before + snippet + text.slice(at), at, length: snippet.length };
 }
 
@@ -166,9 +168,15 @@ export function composerDelivery(agent: string | null, status?: AgentStatus): "q
  * it is uploading, and nothing else in the card would say why Stop and add are off. Otherwise
  * an upload says so while it runs.
  */
-export function composerStatusHint(state: { uploading: boolean; connected: boolean; text: string }): "uploading" | "offline" | null {
+/** Characters left at which the composer starts counting them: further off, a count is noise. */
+export const COMPOSER_CHARS_WARNING = 200;
+
+/** `noRoom`: a finished upload's path waits for the message to be shortened. */
+export function composerStatusHint(state: { uploading: boolean; connected: boolean; text: string; noRoom?: boolean }): "uploading" | "offline" | "no-room" | "near-limit" | null {
   if (!state.connected && state.text.length > 0) return "offline";
-  return state.uploading ? "uploading" : null;
+  if (state.noRoom) return "no-room";
+  if (state.uploading) return "uploading";
+  return MAX_COMPOSER_CHARS - state.text.length <= COMPOSER_CHARS_WARNING ? "near-limit" : null;
 }
 
 /**
