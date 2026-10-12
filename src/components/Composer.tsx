@@ -376,6 +376,9 @@ export function Composer({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // files not yet sent and paths not yet placed go with the pane
+      uploadQueue.current = [];
+      waitingMentions.current = [];
       for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.previewUrl);
     };
   }, []);
