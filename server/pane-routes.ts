@@ -13,6 +13,7 @@ import { conversationImage, ConversationUnavailable, forgetPaneTranscriptState, 
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { openCodeInstalledVersion } from "./opencode-service.ts";
 import { DevinHistoryChanged } from "./devin.ts";
+import { conversationDelta } from "../shared/conversation-delta.ts";
 import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
 import { paneContext, resolveAgent, versionSourceOf } from "./pane-context.ts";
 import { PasteImageError, readImageBody, savePaneImage } from "./paste.ts";
@@ -255,6 +256,7 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       before: url.searchParams.get("before") ?? undefined,
       since: url.searchParams.get("since") ?? undefined,
       from: url.searchParams.get("from") ?? undefined,
+      cache: url.searchParams.get("incremental") === "1",
     };
     try {
       const { version, ...conversation } = await paneConversation(paneId, options.codexHome, page, options.devinDbPath, options.opencodeDb, options.hermesHome, options.grokHome);
@@ -263,7 +265,7 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       const etag = `W/"${version}"`;
       const headers = { etag, "cache-control": "no-store" };
       if (request.headers.get("if-none-match")?.replace(/^W\//, "") === etag.slice(2)) return new Response(null, { status: 304, headers });
-      return jsonResponse(conversation, 200, headers);
+      return jsonResponse(url.searchParams.get("incremental") === "1" ? await conversationDelta(conversation, url.searchParams.get("delta")) : conversation, 200, headers);
     } catch (error) {
       if (error instanceof HistoryChanged || error instanceof DevinHistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
       // an unrecognized pane is not an error: the client falls back to the

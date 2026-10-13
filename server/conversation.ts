@@ -1139,11 +1139,15 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (page.before !== undefined || page.since !== undefined || page.from !== undefined) throw new HistoryChanged();
     return await notBegun(launch.source, launch.historyId);
   }
+  const cacheSession = page.cache ? createHash("sha256").update(JSON.stringify([
+    resolved.source, resolved.path, "session" in resolved ? resolved.session : "sessionId" in resolved ? resolved.sessionId : null,
+  ])).digest("base64url") : undefined;
+  const identified = (answer: RecognizedConversation): RecognizedConversation => cacheSession === undefined ? answer : { ...answer, cache_session: cacheSession };
   if (resolved.source === "devin-transcript") {
     try {
       const answer = devinConversation(resolved.session, resolved.cwd, page, resolved.path);
       rememberPaneDevin(paneId, resolved.session, resolved.cwd, resolved.path);
-      return answer;
+      return identified(answer);
     } catch (error) {
       if (error instanceof DevinHistoryUnavailable) throw new ConversationUnavailable("transcript_missing");
       throw error;
@@ -1157,7 +1161,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (answer.kind === "unavailable") throw new ConversationUnavailable(answer.reason);
     const { kind: _kind, signature, ...conversation } = answer;
     const key = `opencode\0${resolved.path}\0${resolved.session}\0${page.before ?? ""}\0${page.since ?? ""}\0${page.from ?? ""}`;
-    return { source: resolved.source, ...conversation, version: answerVersion(key, signature) };
+    return identified({ source: resolved.source, ...conversation, version: answerVersion(key, signature) });
   }
   if (resolved.source === "hermes-transcript") {
     rememberPaneRead(paneId, resolved.path);
@@ -1165,7 +1169,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
       const answer = hermesConversationPage(resolved.sessionId, resolved.path, page);
       writtenSessions.add(`${resolved.source}\0${resolved.sessionId}`);
       rememberPaneSession(paneId, `${resolved.source}\0${resolved.sessionId}`);
-      return answer;
+      return identified(answer);
     } catch (error) {
       if (error instanceof ConversationNotStarted) return await onNotStarted(error);
       throw error;
@@ -1193,10 +1197,10 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (model && answer.metadata.model === null) answer.metadata.model = model;
   }
   if (resolved.source === "grok-transcript") {
-    try { return { ...answer, activity: grokProjection(resolved.path, statSync(resolved.path)).activity }; }
+    try { return identified({ ...answer, activity: grokProjection(resolved.path, statSync(resolved.path)).activity }); }
     catch { throw new ConversationUnavailable("transcript_missing"); }
   }
-  return answer;
+  return identified(answer);
 }
 
 /**

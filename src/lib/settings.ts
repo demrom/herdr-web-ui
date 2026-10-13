@@ -69,6 +69,9 @@ export interface Settings {
   /** This device's terminal keys, sticky modifiers and exact chords, in display order. */
   keyBarItems: KeyBarItem[];
   shortcutOverrides: ShortcutOverrides;
+  /** Opt-in parsed transcript storage on this device only. */
+  chatHistoryCache: boolean;
+  chatHistoryCacheMB: number;
   theme: ThemeSetting;
   density: Density;
   /** How much a workspace row says: its name, or its pane's title over its place. */
@@ -188,7 +191,9 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
   | "quickReplies" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
-  | "followHerdrFocus" | "composerNewTabButton">;
+  | "followHerdrFocus" | "composerNewTabButton"
+  // not collected: transcript caching is a private device storage preference
+  | "chatHistoryCache" | "chatHistoryCacheMB">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -262,7 +267,7 @@ export const SETTING_SCOPE = {
   agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device", suggestionChip: "device",
-  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", density: "device",
+  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", chatHistoryCache: "device", chatHistoryCacheMB: "device", density: "device",
   terminalFontSize: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
   // a desk that follows herdr's focus must not move a phone open on another pane
@@ -289,6 +294,8 @@ export const DEFAULT_SETTINGS: Settings = {
   keyBarExtras: ["alt"],
   keyBarItems: DEFAULT_KEY_BAR_ITEMS,
   shortcutOverrides: {},
+  chatHistoryCache: false,
+  chatHistoryCacheMB: 500,
   theme: "dark",
   density: "comfortable",
   sidebarRows: "one",
@@ -460,6 +467,8 @@ export function sanitizeSettings(raw: unknown): Settings {
     keyBarExtras,
     keyBarItems: sanitizeKeyBarItems(record["keyBarItems"], keyBarFallback),
     shortcutOverrides: sanitizeShortcutOverrides(record["shortcutOverrides"]),
+    chatHistoryCache: typeof record["chatHistoryCache"] === "boolean" ? record["chatHistoryCache"] : DEFAULT_SETTINGS.chatHistoryCache,
+    chatHistoryCacheMB: typeof record["chatHistoryCacheMB"] === "number" && Number.isFinite(record["chatHistoryCacheMB"]) ? Math.max(1, Math.min(10000, Math.floor(record["chatHistoryCacheMB"]))) : DEFAULT_SETTINGS.chatHistoryCacheMB,
     theme,
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,

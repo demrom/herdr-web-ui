@@ -51,6 +51,7 @@ export type RecognizedConversation = {
    */
   abandoned?: { count: number; branches: number; summary: string | null };
   history_id: string;
+  cache_session?: string;
   /** changes whenever the answer could: the route's ETag, so an unchanged poll costs no body */
   version: string;
 };
@@ -70,4 +71,4 @@ export function answerVersion(key: string, signature: string): string {
  * while it is still inside the newest page); with `before`, the page ending there,
  * never reaching back past `since`.
  */
-export type ConversationPage = { before?: string; since?: string; from?: string };
+export type ConversationPage = { before?: string; since?: string; from?: string; cache?: boolean };

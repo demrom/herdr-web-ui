@@ -43,3 +43,45 @@
 .chat-new-messages.chat-virtual-jump {
   position: absolute;
 }
+
+/* Edge indicators are overlays with fixed geometry, so loading never shifts a row. */
+.chat-edge-loading {
+  position: absolute;
+  z-index: var(--z-header);
+  left: 50%;
+  transform: translateX(-50%);
+  height: var(--space-5);
+  width: max-content;
+  max-width: calc(100% - var(--space-4));
+  padding-inline: var(--space-2);
+  gap: var(--space-1);
+  font-size: var(--fs-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  visibility: hidden;
+}
+.chat-edge-loading[data-loading],
+.chat-initial-loading { animation: chat-loading-show 0s linear 400ms forwards; }
+.chat-initial-loading { visibility: hidden; }
+@keyframes chat-loading-show { to { visibility: visible; } }
+.chat-edge-loading.is-older { top: var(--space-2); }
+.chat-older[data-loading-overlay] { visibility: hidden; }
+.chat-edge-loading span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-edge-loading svg {
+  flex-shrink: 0;
+  width: var(--space-4);
+  height: var(--space-4);
+  animation: chat-edge-spin var(--dur-spin) steps(12) infinite;
+}
+@keyframes chat-edge-spin { to { transform: rotate(360deg); } }
+.chat-row-reveal { animation: chat-row-reveal var(--dur-base) var(--ease-out); }
+@keyframes chat-row-reveal { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-edge-loading svg,
+  .chat-row-reveal { animation: none; }
+}
