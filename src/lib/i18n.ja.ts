@@ -106,6 +106,8 @@ export const JA: Record<string, string> = {
   "Comma-separated, tried in order. A font this device does not have falls back to the default.": "カンマ区切りで、先頭から順に使います。このデバイスにないフォントは既定のフォントで表示します。",
   "Composer": "入力欄",
   "Enter sends": "Enter で送信",
+  "Return inserts a new line": "Return で改行",
+  "When on, use Send or hardware Mod+Enter to send.": "オンの場合は送信ボタン、またはハードウェアキーボードの Mod+Enter で送信します。",
   "When off, Mod+Enter sends": "オフの場合は Mod+Enter で送信します",
   "Files at once": "一度に添付するファイル数",
   "How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.": "1 回の貼り付け、選択、ドロップで添付するファイルの数です。残りは添付されず、何件かをメッセージ欄に表示します。",
