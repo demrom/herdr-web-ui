@@ -61,6 +61,15 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--icon-size);
 }
 
+/* the project's own icon, in the folder glyph's cell */
+.workspace-favicon img {
+  display: block;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+}
+
 /* the marks that ride currentColor (codex, cursor, pi) read as the title does */
 .sidebar-mark .agent-mark {
   display: inline-flex;

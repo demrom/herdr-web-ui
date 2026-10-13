@@ -27,7 +27,8 @@ export interface AppActions {
    * else the selected pane's. Nothing happens without a workspace to add the tab to.
    */
   openNewTab: (target?: { machineId: string; workspaceId: string }) => void;
-  openPalette: () => void;
+  /** the palette, blank or opened on `query` (a `>` prefix keeps the actions alone) */
+  openPalette: (query?: string) => void;
   /**
    * A pane this client moved (POST /api/pane/move), under the id it answers to now: the lens
    * and drafts kept under the old id follow it, and the selection too when it was the

@@ -11,38 +11,17 @@ import { herdrRpc, sessionSnapshot, workspaceCreate, workspaceClose } from "../s
 import type { PaneMoved, SessionSnapshot, WorkspaceCreated, WorktreeOpened } from "../shared/protocol.ts";
 import type { Machine } from "../shared/machines.ts";
 import { alertsOffMarked, alertsState, runMoreItem } from "./header-more.ts";
-import { checkPushSettings } from "./push-settings-regression.ts";
-import { checkWakeLock } from "./wake-lock-regression.ts";
-import { checkSecretInput } from "./secret-input-regression.ts";
-import { checkTerminalCopy } from "./terminal-copy-regression.ts";
-import { checkPaneFind } from "./pane-find-regression.ts";
-import { checkUsageMeters } from "./usage-regression.ts";
-import { checkNotificationStartup } from "./notification-startup-regression.ts";
-import { checkNotificationView } from "./notification-view-regression.ts";
-import { checkMobileViewport } from "./mobile-viewport-regression.ts";
-import { checkTerminalPinch } from "./terminal-pinch-regression.ts";
-import { checkMobileTabs } from "./mobile-tabs-regression.ts";
-import { checkTabMenu } from "./tab-menu-regression.ts";
 import { sheetsSettled } from "./sheets-settled.ts";
 import { routeDrained } from "./drained-route.ts";
 import { checkTerminalFileInput } from "./terminal-file-input-regression.ts";
 import { checkTerminalInput } from "./terminal-input-regression.ts";
 import { checkSafariIme } from "./terminal-safari-ime-regression.ts";
 import { checkHeldDraftPaneSwitch } from "./terminal-draft-regression.ts";
-import { checkDefaultView } from "./default-view-regression.ts";
-import { checkComposerReconnect } from "./composer-reconnect-regression.ts";
-import { checkDroplet } from "./droplet-regression.ts";
-import { checkSplitView } from "./split-view-regression.ts";
-import { checkTakeOver } from "./take-over-regression.ts";
-import { checkAlertSound } from "./alert-sound-regression.ts";
-import { checkBackgroundTabKeepsTerminalSize, checkChatKeepsTerminalSize, checkFocusedWindowReclaimsTerminalSize, checkPaneSwitchKeepsTerminalSize } from "./chat-size-regression.ts";
 import { checkCommandBackspace } from "./terminal-command-backspace-regression.ts";
 import { checkCtrlEnter } from "./terminal-ctrl-enter-regression.ts";
 import { checkCommandArrows } from "./terminal-command-arrows-regression.ts";
 import { checkFolderFilter } from "./folder-filter-regression.ts";
 import { checkPaletteKeys } from "./palette-keys-regression.ts";
-import { checkUpdateNotice } from "./update-notice-regression.ts";
-import { checkTelemetrySettings } from "./telemetry-regression.ts";
 import { UsageService } from "../server/usage.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { assertCspClean, watchCsp } from "./csp-violations.ts";
@@ -424,6 +403,14 @@ try {
     const offlineAgent = offlinePage.locator(`.agents-sidebar .agent-item[data-machine="local"][data-pane="${paneB}"] .agent-select`);
     await offlineAgent.waitFor();
     assert.equal(await offlineAgent.isDisabled(), true, "a cached offline agent cannot select its pane");
+    const offlineWorkspace = offlinePage.locator('.machine-offline').first();
+    assert.equal(await offlineWorkspace.evaluate((element) => element.inert), true,
+      "offline workspace controls use native inert handling");
+    assert.equal(await offlineWorkspace.evaluate((element) => {
+      const button = element.querySelector<HTMLButtonElement>("button");
+      button?.focus();
+      return element.contains(document.activeElement);
+    }), false, "offline workspace controls cannot take keyboard focus");
     const selectionBefore = await offlinePage.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection"));
     await offlineAgent.dispatchEvent("click");
     assert.equal(await offlinePage.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection")), selectionBefore,
@@ -850,31 +837,6 @@ try {
   await blocked.close();
   console.log("PASS a device that blocks notifications keeps the Alerts item as the switch for in-app alerts");
 
-  await checkPushSettings(browser, origin);
-  await checkWakeLock(browser, origin, paneA);
-  await checkSecretInput(browser, origin);
-  await checkTerminalCopy(browser, origin);
-  await checkPaneFind(browser, origin);
-  await checkUsageMeters(browser, origin);
-  await checkNotificationStartup(browser, origin, paneA, paneB);
-  await checkNotificationView(browser, origin);
-  await checkMobileViewport(browser, origin, paneB);
-  await checkTerminalPinch(browser, origin, paneB);
-  await checkMobileTabs(browser, origin);
-  await checkTabMenu(browser, origin);
-  await checkDefaultView(browser, origin);
-  await checkComposerReconnect(browser, origin, paneB);
-  await checkDroplet(browser, origin);
-  await checkSplitView(browser, origin);
-  await checkTakeOver(browser, origin);
-  await checkAlertSound(browser, origin);
-  await checkChatKeepsTerminalSize(browser, origin);
-  await checkPaneSwitchKeepsTerminalSize(browser, origin);
-  await checkBackgroundTabKeepsTerminalSize(browser, origin);
-  await checkFocusedWindowReclaimsTerminalSize(browser, origin);
-  await checkUpdateNotice(browser, origin);
-  await checkTelemetrySettings(browser);
-
   // The pending protocol has a real foreground agent and an owned byte recorder: merely
   // reporting an idle shell as working would not prove that server-side queueing happened.
   const pendingCwd = join(root, "pending"); mkdirSync(pendingCwd);
@@ -1013,9 +975,11 @@ try {
     assert.ok(text && left && status && right, "the message box and the three cells of the controls row");
     // each row spans the card's inner width: inside its hairline border, a fraction of a px either way
     assert.ok(Math.abs(text.x - card.x) <= 2.5 && Math.abs(text.width - card.width) <= 4, `.composer-text spans the box: ${JSON.stringify({ text, card })}`);
-    // the status content is the middle cell of the last row: add on its left, the round button on its right, no gap between the cells
-    assert.ok(Math.abs(left.x - card.x) <= 2.5 && Math.abs(status.x - (left.x + left.width)) <= 1 && Math.abs(right.x - (status.x + status.width)) <= 1
-      && Math.abs(right.x + right.width - left.x - card.width) <= 4, `the controls row spans the box: ${JSON.stringify({ left, status, right, card })}`);
+    // the status content (the model group) starts the last row, the action icons follow it and the round button ends it,
+    // the cells parted only by the card's column gap
+    const gap = await page.locator(".composer-surface").evaluate((element) => parseFloat(getComputedStyle(element).columnGap) || 0);
+    assert.ok(Math.abs(status.x - card.x) <= 2.5 && Math.abs(left.x - (status.x + status.width + gap)) <= 1 && Math.abs(right.x - (left.x + left.width + gap)) <= 1
+      && Math.abs(right.x + right.width - status.x - card.width) <= 4, `the controls row spans the box: ${JSON.stringify({ status, left, right, gap, card })}`);
     for (const selector of [".composer-queue", ".chat-transcript"]) {
       const box = await page.locator(selector).boundingBox();
       assert.ok(box, selector);

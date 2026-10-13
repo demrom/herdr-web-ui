@@ -215,6 +215,11 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
     const titles = items.map((item) => label(item["task_summary"]) ?? label(item["description"])).filter((title) => title !== null);
     if (titles.length > 0) return titles.join(" · ").slice(0, 120);
   }
+  // what the agent itself said the call is for: OmO's eval `summary`, the `description` Claude
+  // gives a Bash command or a subagent's prompt. Another tool's `description` is its own data.
+  const said = typeof input["code"] === "string" ? label(input["summary"])
+    : typeof input["command"] === "string" || typeof input["prompt"] === "string" ? label(input["description"]) : null;
+  if (said !== null) return said.slice(0, 120);
   // pi names a file `path` where Claude names it `file_path`, and a notebook `notebook_path`.
   const first = input["command"] ?? input["file_path"] ?? input["notebook_path"] ?? input["path"] ?? input["pattern"] ?? input["description"] ?? input["url"];
   return typeof first === "string" ? first.slice(0, 120) : name;

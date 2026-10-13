@@ -95,9 +95,14 @@ describe("inline markdown", () => {
       { type: "file", path: "/home/u/repo/output/REPORT.md", children: [{ type: "text", value: "실험 결과" }] },
     ]);
     expect(parseInline("[x](src/x.ts#L12) [y](~/y.md:3:1)")).toMatchObject([
-      { type: "file", path: "src/x.ts" },
+      { type: "file", path: "src/x.ts#L12" },
       { type: "text", value: " " },
-      { type: "file", path: "~/y.md" },
+      { type: "file", path: "~/y.md:3:1" },
+    ]);
+    expect(parseInline("[range](src/x.ts#L12-L18) [section](docs/a.md#usage)")).toMatchObject([
+      { type: "file", path: "src/x.ts#L12-L18" },
+      { type: "text", value: " " },
+      { type: "file", path: "docs/a.md" },
     ]);
     for (const target of ["javascript:bad", "data:text/html,x", "#section"]) {
       expect(parseInline(`[label](${target})`)).toEqual([{ type: "text", value: "label" }]);
@@ -117,8 +122,8 @@ describe("inline markdown", () => {
       { type: "text", value: "." },
     ]);
     // a file and its line, or a folder with a dot, is not an address
-    expect(parseInline("[main.ts](main.ts:42)")).toMatchObject([{ type: "file", path: "main.ts" }]);
-    expect(parseInline("[README.md](README.md:3:1)")).toMatchObject([{ type: "file", path: "README.md" }]);
+    expect(parseInline("[main.ts](main.ts:42)")).toMatchObject([{ type: "file", path: "main.ts:42" }]);
+    expect(parseInline("[README.md](README.md:3:1)")).toMatchObject([{ type: "file", path: "README.md:3:1" }]);
     expect(parseInline("[notes](notes.v2/todo.md)")).toMatchObject([{ type: "file", path: "notes.v2/todo.md" }]);
     expect(parseInline("[call](tel:123)")).toEqual([{ type: "text", value: "call" }]);
     // a local server by address is plain http, as localhost is

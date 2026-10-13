@@ -18,7 +18,7 @@ export interface TabDragOut {
 export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale, outside }: {
   owner: string;
   tabs: HerdrTab[];
-  strip: RefObject<HTMLDivElement>;
+  strip: RefObject<HTMLDivElement | null>;
   moveTab: (tabId: string, boundary: number) => Promise<TabMoved>;
   failed: (error: unknown) => void;
   stale: () => void;

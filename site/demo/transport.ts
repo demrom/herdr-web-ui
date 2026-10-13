@@ -13,6 +13,7 @@
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
 import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
@@ -524,6 +525,54 @@ async function layoutBodyOf(method: string, init: RequestInit | undefined, input
 }
 
 const DEMO_FILES = ["src/routes/payments.ts", "src/lib/idempotency.ts", "src/metrics.ts", "src/pages/Reports.tsx", "src/money.ts", "src/money.test.ts", "package.json", "README.md"];
+
+/**
+ * The demo repository's uncommitted work, as GET /api/workspace/diff/* answers it: one file of
+ * each kind a diff view has to draw. The patches are what git would print, hunk counts included.
+ */
+const DEMO_DIFF_LIMITS = { max_files: 2000, max_list_bytes: 2 * 1024 * 1024, max_patch_bytes: 1024 * 1024, context_lines: 3 };
+const DEMO_DIFF: { file: RepoDiffFile; patch: string | null }[] = [
+  { file: { path: "docs/checkout-flow.png", old_path: null, status: "modified", additions: null, deletions: null, binary: true }, patch: null },
+  { file: { path: "src/lib/idempotency.ts", old_path: "src/idempotency.ts", status: "renamed", additions: 0, deletions: 0, binary: false }, patch: [
+    "diff --git a/src/idempotency.ts b/src/lib/idempotency.ts",
+    "similarity index 100%",
+    "rename from src/idempotency.ts",
+    "rename to src/lib/idempotency.ts",
+    "",
+  ].join("\n") },
+  { file: { path: "src/money.test.ts", old_path: null, status: "untracked", additions: null, deletions: null, binary: false }, patch: [
+    "diff --git a/src/money.test.ts b/src/money.test.ts",
+    "new file mode 100644",
+    "index 0000000..5d2e8c1",
+    "--- /dev/null",
+    "+++ b/src/money.test.ts",
+    "@@ -0,0 +1,6 @@",
+    "+import { expect, it } from \"bun:test\";",
+    "+import { toCents } from \"./money.ts\";",
+    "+",
+    "+it(\"rounds half a cent away from zero\", () => {",
+    "+  expect(toCents(10.075)).toBe(1008);",
+    "+});",
+    "",
+  ].join("\n") },
+  { file: { path: "src/money.ts", old_path: null, status: "modified", additions: 4, deletions: 1, binary: false }, patch: [
+    "diff --git a/src/money.ts b/src/money.ts",
+    "index 3f1c2aa..9b7d410 100644",
+    "--- a/src/money.ts",
+    "+++ b/src/money.ts",
+    "@@ -1,5 +1,8 @@",
+    " export type Cents = number;",
+    " ",
+    "+/** Rounds half away from zero, so 10.075 is 1008 cents and not 1007. */",
+    " export function toCents(amount: number): Cents {",
+    "-  return amount * 100;",
+    "+  const scaled = Math.abs(amount) * 100;",
+    "+  const rounded = Math.round(scaled + Number.EPSILON * scaled);",
+    "+  return Math.sign(amount) * rounded;",
+    " }",
+    "",
+  ].join("\n") },
+];
 
 /** Settings → Subscription usage on the demo: plans as the workstation's CLIs might report them, resets counted from now. */
 function usageReport(): UsageReport {
@@ -1070,6 +1119,24 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
   if (path === "/api/voice/config") return error("demo", "the demo saves no OpenAI key", 409);
   if (path === "/api/voice/transcribe") return error("voice_not_configured", "transcription is unavailable in the demo", 409);
+  if (path === "/api/workspace/diff/files" || path === "/api/workspace/diff/file") {
+    const scope = query.get("scope") || "workspace";
+    if (scope !== "workspace" && scope !== "staged" && scope !== "commit") return error("invalid_scope", "scope must be workspace, staged or commit", 400);
+    // the demo keeps no history to name commits in
+    if (scope === "commit") return error("revision_not_found", "the demo repository has no commits to compare", 404);
+    const root = snapshot().panes.find((pane) => pane.pane_id === paneId)?.cwd ?? query.get("directory") ?? "/home/demo/checkout-api";
+    const repository: RepoDiffRepository = { root, branch: "main", head: "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c", detached: false, unborn: false };
+    // everything in the demo is unstaged work
+    const changed = scope === "workspace" ? DEMO_DIFF : [];
+    const compared: RepoDiffScope = scope;
+    const shared = { repository, scope: compared, base: null, head: null };
+    if (path === "/api/workspace/diff/files") {
+      return json({ ...shared, files: changed.map((entry) => entry.file), total: changed.length, truncated: false, limits: { max_files: DEMO_DIFF_LIMITS.max_files, max_list_bytes: DEMO_DIFF_LIMITS.max_list_bytes } } satisfies RepoDiffFileList);
+    }
+    const entry = changed.find((candidate) => candidate.file.path === query.get("path"));
+    if (!entry) return error("not_found", "nothing changed at that path in this comparison", 404);
+    return json({ ...shared, file: entry.file, patch: entry.patch, unavailable: entry.patch === null ? "binary" : null, truncated: false, limits: { max_patch_bytes: DEMO_DIFF_LIMITS.max_patch_bytes, context_lines: DEMO_DIFF_LIMITS.context_lines } } satisfies RepoDiffFilePatch);
+  }
   if (path.startsWith("/api/fs/")) return error("not_found", "the demo has no files to open", 404);
   return error("demo", `${method} ${path} is not part of the demo`, 404);
 }

@@ -11,8 +11,9 @@ export function hasPreview(language: string | null): boolean {
 /**
  * How many elements a Preview may draw. Its parse runs in a worker, but drawing is on the page: in
  * Chromium a list of 65 536 items (about 131 000 elements) held it for 1.6 s, about 12 µs an
- * element, so this many stay well under a second. A file past it opens as its source, "Too long to
- * preview".
+ * element. It bounds the whole Preview's memory and work; no single task draws it all, since the
+ * viewer adds it a chunk at a time (PREVIEW_CHUNK_ELEMENTS). A file past it opens as its source, "Too
+ * long to preview".
  */
 export const PREVIEW_ELEMENT_LIMIT = 60_000;
 
@@ -47,6 +48,31 @@ function inlineElements(nodes: readonly InlineNode[]): number {
 export function previewElements(blocks: readonly MarkdownBlock[]): number {
   // the Preview's own `.markdown` box
   return 1 + blockElements(blocks);
+}
+
+/**
+ * How many elements a Preview draws in one task. The whole Preview at once is one task proportional
+ * to the file: 256 KB of ordinary notes (about 30 000 elements) held a CI runner's page past a
+ * second. A chunk this size is about 25 ms on a desktop, and the Preview fills in one per task.
+ */
+export const PREVIEW_CHUNK_ELEMENTS = 2_000;
+
+/**
+ * `blocks` in runs of whole top-level blocks of at most `limit` elements each (a block larger than
+ * the limit is a run of its own), in order; nothing is dropped and no block is split.
+ */
+export function previewChunks(blocks: readonly MarkdownBlock[], limit = PREVIEW_CHUNK_ELEMENTS): MarkdownBlock[][] {
+  const chunks: MarkdownBlock[][] = [];
+  let chunk: MarkdownBlock[] = [];
+  let size = 0;
+  for (const block of blocks) {
+    const elements = blockElements([block]);
+    if (chunk.length > 0 && size + elements > limit) { chunks.push(chunk); chunk = []; size = 0; }
+    chunk.push(block);
+    size += elements;
+  }
+  if (chunk.length > 0) chunks.push(chunk);
+  return chunks;
 }
 
 function blockElements(blocks: readonly MarkdownBlock[]): number {

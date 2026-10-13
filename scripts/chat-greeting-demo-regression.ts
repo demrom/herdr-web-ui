@@ -286,7 +286,11 @@ try {
         const title = (await page.locator(".composer-greeting-title").boundingBox())!;
         // Chromium blurs a field on any tap outside it and iOS does not, so the blur alone proves
         // nothing here: what counts is that the touch lands on the chat, whose handler iOS needs
-        const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".chat-view, .composer")?.className ?? null, { x: title.x + title.width / 2, y: title.y + title.height / 2 });
+        const hit = await page.evaluate(({ x, y }) => {
+          // which of the two the touch reaches, whatever other classes it carries (a virtualized chat has one more)
+          const surface = document.elementFromPoint(x, y)?.closest(".chat-view, .composer");
+          return surface == null ? null : surface.matches(".chat-view") ? "chat-view" : "composer";
+        }, { x: title.x + title.width / 2, y: title.y + title.height / 2 });
         assert.equal(hit, "chat-view", "a touch on the greeting lands on the chat under it");
         await page.touchscreen.tap(title.x + title.width / 2, title.y + title.height / 2);
         await page.waitForFunction(() => !(document.activeElement instanceof HTMLTextAreaElement), undefined, { timeout: 3_000 });

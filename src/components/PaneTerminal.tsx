@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, us
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ChevronRight, Clock, TriangleAlert, X } from "lucide-react";
+import { ChevronRight, ClipboardCheck, Clock, Quote, TriangleAlert, Unplug, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import "./PaneTerminal.css";
 
@@ -18,11 +18,14 @@ import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, restoreDraft, type InputDraft 
 import { messageQueues } from "../lib/messageQueue.ts";
 import { pendingMessages } from "../lib/pendingMessages.ts";
 import { heldCountShown, heldOpenAtFold, heldOpenOnFocus, heldRefocusDue, heldRowError, heldRowsFold, heldRowsHidden, heldToggleShown, SHORT_PHONE_QUERY } from "../lib/heldRows.ts";
+import { arrangeNotices, dismissNotice, NO_DISMISSALS, settleDismissed, type DismissedNotices } from "../lib/composerNotices.ts";
 import { type DraftRefusal, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, agentDisplayLabel, composerDelivery, composerMessage, composerPayload, submitNote, submitNotTyped, submitRefusal } from "../lib/compose.ts";
 import { afterRead, afterSend, afterSettled, composerLift, greetingMemory, rememberGreeting, greetingFits, greetingFolder, roomOverComposer, showsGreeting, type ChatRead } from "../lib/greeting.ts";
 import { answerFromText, answerHint, answerRefusal, needsConfirmation, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { ApiError, assertAttachable, fetchPaneScroll, fetchPaneSelection, scrollPane } from "../lib/api.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
+import { composerDrafts } from "../lib/composerDraft.ts";
+import { appendQuote, formatTerminalQuote } from "../lib/terminalQuote.ts";
 import { matchHerdrWidths } from "../lib/terminalWidths.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { PaneAwayContext } from "../lib/paneAwayContext.ts";
@@ -36,6 +39,7 @@ import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { ChatView } from "./ChatView.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { Composer } from "./Composer.tsx";
+import { ComposerNotices, type ComposerNoticeRow } from "./ComposerNotices.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
 import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneControls, PaneView } from "../lib/actions.ts";
@@ -66,6 +70,7 @@ const RELEASE_AFTER_MS = 1000;
 const inUse = (): boolean => document.visibilityState === "visible" && document.hasFocus();
 
 export interface PaneTerminalProps {
+  onOpenDiff?: (target: import("../lib/repoDiff.ts").RepoDiffTarget) => void;
   /** The pane this terminal attaches to; null renders the placeholder. */
   paneId: string | null;
   /**
@@ -161,6 +166,7 @@ export function PaneTerminal({
   onRoleAck,
   onConnectionChange,
   onServerMessage,
+  onOpenDiff,
 }: PaneTerminalProps) {
   const t = useT();
   const activeRef = useRef(active);
@@ -343,6 +349,10 @@ export function PaneTerminal({
   // transient OSC 52 feedback ("copied") — a pill in the banner column
   const [clipboardNote, setClipboardNote] = useState<string | null>(null);
   const clipboardTimerRef = useRef<number | null>(null);
+  // the notices the user put away over the input card (lib/composerNotices.ts)
+  const [dismissedNotices, setDismissedNotices] = useState<DismissedNotices>(NO_DISMISSALS);
+  // the text of the last drag, offered to the chat draft while its highlight stays (herdr's rows when it gave them)
+  const [selectionQuote, setSelectionQuote] = useState<{ pane: string; text: string; range: { start: number; end: number } | null } | null>(null);
   // Explicit sends refresh immediately; continuous transcript invalidations are rate-limited.
   const [chatRefresh, setChatRefresh] = useState(0);
   const [chatInvalidation, setChatInvalidation] = useState(0);
@@ -686,6 +696,7 @@ export function PaneTerminal({
       if (!term.hasSelection()) {
         copiedText = null;
         selectionGeneration++;
+        setSelectionQuote(null);
       }
     });
 
@@ -806,6 +817,7 @@ export function PaneTerminal({
       if (reporting) Object.defineProperty(event, isMac ? "altKey" : "shiftKey", { value: true });
       copiedText = null;
       selectionGeneration++;
+      setSelectionQuote(null);
       const pane = paneRef.current;
       const { cell } = cellAt(event);
       const d: Drag = {
@@ -886,6 +898,8 @@ export function PaneTerminal({
       copySelection();
       const generation = selectionGeneration;
       const current = (): boolean => !disposed && paneRef.current === d.pane && generation === selectionGeneration;
+      // offered to the chat draft at once with what is on screen; herdr's text and rows replace it below
+      if (d.pane !== "") setSelectionQuote({ pane: d.pane, text: visibleText, range: null });
       let range: [Cell, Cell] | null = null;
       if (d.scrolled) range = historyRange(d);
       else if (d.top !== null) {
@@ -899,14 +913,19 @@ export function PaneTerminal({
         }
       }
       if (!range) return;
+      // herdr's text covers the whole range; the visible text in its place does not, so the quote
+      // then names no line range rather than one its text does not hold
+      let fromHerdr = true;
       const text = fetchPaneSelection(d.pane, range[0], range[1], machineId).catch(() => {
         if (current() && d.scrolled) noteClipboard("could not read the selection from herdr");
+        fromHerdr = false;
         return visibleText;
       }).then((value) => {
         if (!current()) throw new Error("selection changed");
         // A redraw can remove the range before herdr reads it. Keep what the user
         // actually selected instead of replacing a successful copy with nothing.
         copiedText = value || visibleText;
+        setSelectionQuote({ pane: d.pane, text: copiedText, range: fromHerdr && value ? { start: range[0].row, end: range[1].row } : null });
         return copiedText;
       });
       // Reserve the write NOW, supplying the server text when it arrives. Never
@@ -2139,6 +2158,47 @@ export function PaneTerminal({
     return () => { observer.disconnect(); stack.style.removeProperty("--composer-lift"); stack.style.removeProperty("--composer-room"); setGreetingRoom(true); };
   }, [greetingDue, paneId]);
 
+  // Under the chat lens, while the input card shows, the pills the terminal lens floats top-right
+  // (another app holds the pane, the output stream failed, input held for the terminal, a copy
+  // note) stand over the card instead, as rows of the composer's with a dismiss each. Without the
+  // card (view only, ended, a secret prompt) they stay pills. The ids carry the pane, so another
+  // pane's dismissals never carry over; a dismissal goes with its notice, or when the notice says
+  // something else (lib/composerNotices.ts)
+  const noticesDocked = presented && paneId !== null && chatView && !secretActive && !observing && !ended;
+  const noticeItems: ComposerNoticeRow[] = [];
+  if (paneId !== null) {
+    const owner = paneStorageId(machineId, paneId);
+    const takeOver = !observing && socketRef.current?.canTakeOver() === true;
+    if (held) noticeItems.push({
+      id: `${owner}:held`, priority: "urgent", revision: takeOver ? "open-here" : "", warning: true, mark: <Unplug />,
+      text: t("Another app has this pane open. It connects here as soon as that app lets go."),
+      actions: takeOver && <button type="button" className="composer-notice-action" title={t("Take this pane from another web app or terminal attach. That connection will close.")} onClick={() => { socketRef.current?.takeOver(paneId); }}>{t("Open here")}</button>,
+    });
+    if (outputError) noticeItems.push({
+      id: `${owner}:output`, priority: "urgent", revision: outputError, warning: true, mark: <TriangleAlert />, text: outputError,
+      actions: <a className="composer-notice-action" href={`?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}`}>{t("Reconnect")}</a>,
+    });
+    if (!ended && connected && !draftIsEmpty(draft)) noticeItems.push({
+      id: `${owner}:draft`, priority: "activity", revision: `${draft.truncated ? "…" : ""}${draft.text}`, warning: false, mark: <Clock />,
+      text: <>
+        {t("Input held until the terminal is ready:")}
+        {draft.text.length > 0 && <> <code>{draft.text}</code></>}
+        {draft.truncated && <> {t("Some input was too long to hold and was left out.")}</>}
+      </>,
+      actions: <>
+        <button type="button" className="composer-notice-action" disabled={draft.text.length === 0 || observing || secretActive || held} onClick={sendDraft}>{t("Send")}</button>
+        <button type="button" className="composer-notice-action is-quiet" onClick={discardDraft}>{t("Discard")}</button>
+      </>,
+    });
+    if (clipboardNote) noticeItems.push({ id: `${owner}:clipboard`, priority: "notice", revision: clipboardNote, warning: false, mark: <ClipboardCheck />, text: clipboardNote });
+  }
+  const settledNotices = settleDismissed(dismissedNotices, noticeItems);
+  if (settledNotices !== dismissedNotices) setDismissedNotices(settledNotices);
+  const shownNotices = noticesDocked ? arrangeNotices(noticeItems, settledNotices) : [];
+  const composerNotices = shownNotices.length > 0
+    ? <ComposerNotices notices={shownNotices} onDismiss={(notice) => { setDismissedNotices((dismissed) => dismissNotice(dismissed, notice)); }} />
+    : null;
+
   const composerSend = useCallback(
     (text: string, clearDraft?: string): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
       const pane = paneRef.current;
@@ -2285,7 +2345,7 @@ export function PaneTerminal({
         </div>
       )}
       <div className="terminal-banners">
-        {paneId !== null && held && (
+        {paneId !== null && held && !noticesDocked && (
           <div className="terminal-banner terminal-banner-warning" role="status">
             <span>{t("Another app has this pane open. It connects here as soon as that app lets go.")}</span>
             {!observing && socketRef.current?.canTakeOver() && (
@@ -2298,7 +2358,7 @@ export function PaneTerminal({
             <span>{t("Live terminal is coming to Windows PCs: herdr cannot attach a terminal there yet. The chat lens works now.")}</span>
           </div>
         )}
-        {paneId !== null && outputError && (
+        {paneId !== null && outputError && !noticesDocked && (
           <div className="terminal-banner terminal-banner-warning terminal-banner-output-error" role="status">
             <span>{outputError}</span>
             <a className="btn" href={`?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}`}>{t("Reconnect")}</a>
@@ -2319,7 +2379,7 @@ export function PaneTerminal({
             {draft.text.length > 0 && <span className="draft-held"> input held: “{draft.text}”</span>}
           </div>
         )}
-        {paneId !== null && !ended && connected && !draftIsEmpty(draft) && (
+        {paneId !== null && !ended && connected && !draftIsEmpty(draft) && !noticesDocked && (
           <div className="terminal-banner terminal-banner-draft" role="status">
             <span className="draft-label">{t("Input held until the terminal is ready:")}</span>
             {draft.text.length > 0 && <code className="draft-text">{draft.text}</code>}
@@ -2340,7 +2400,23 @@ export function PaneTerminal({
             view only — the operator’s screen size is untouched
           </div>
         )}
-        {clipboardNote && (
+        {paneId !== null && !chatView && selectionQuote?.pane === paneId && (
+          <button type="button" className="terminal-banner terminal-banner-action terminal-quote"
+            onMouseDown={(event) => { event.preventDefault(); }}
+            onClick={() => {
+              const block = formatTerminalQuote({ label: title?.trim() || paneId, range: selectionQuote.range, text: selectionQuote.text });
+              if (block === null) return;
+              const key = `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
+              const next = appendQuote(composerDrafts.read(key).text, block, MAX_COMPOSER_CHARS);
+              if (next === null) { noteClipboard(t("Too long for the message draft")); return; }
+              composerDrafts.set(key, next);
+              termRef.current?.clearSelection();
+              noteClipboard(t("Added to the message draft"));
+            }}>
+            <Quote aria-hidden="true" />{t("Quote in message")}
+          </button>
+        )}
+        {clipboardNote && !noticesDocked && (
           <div className="terminal-banner" role="status">
             {clipboardNote}
           </div>
@@ -2375,6 +2451,9 @@ export function PaneTerminal({
           <ChatView
             key={paneId}
             paneId={paneId}
+            cwd={cwd}
+            onOpenDiff={onOpenDiff}
+            active={active}
             pageScroll={pageScroll}
             refreshKey={chatRefresh}
             invalidationKey={chatInvalidation}
@@ -2498,6 +2577,7 @@ export function PaneTerminal({
         <Composer
           key={paneId}
           paneId={paneId}
+          cwd={cwd}
           autoFocus={active && !autoSelected && !coarse}
           active={active}
           agent={agent}
@@ -2512,6 +2592,7 @@ export function PaneTerminal({
           // no suggestion under any card, a fallback or queued one included
           suggestion={chatPrompt?.pane !== paneId && chatSuggestion?.pane === paneId ? chatSuggestion.value : null}
           restored={chatPrompt?.pane !== paneId && chatRestored?.pane === paneId ? chatRestored.value : null}
+          notices={composerNotices}
           greeting={greetingDue ? (
             <div className={`composer-greeting${greeted ? "" : " is-out"}`} ref={greetingRef} aria-hidden={greeted ? undefined : true}>
               <p className="composer-greeting-title">{t("What should {agent} do in {folder}?", { agent: agentDisplayLabel(agent), folder })}</p>

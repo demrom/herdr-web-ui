@@ -7,13 +7,21 @@ import { join } from "node:path";
 const stub = `
 bun() {
   case "$1" in
-    -e) printf '/stub/chrome\\n';;
     scripts/demo-build.ts) printf 'DEMO_DIR=%s\\n' "$HERDR_DEMO_BUILD";;
-    scripts/*) printf 'STEP=%s EVIDENCE=%s\\n' "$1" "\${UI_EVIDENCE_DIR:-}";;
+    scripts/*)
+      [ "\${CHROME_PATH:-}" = /stub/chrome ] || return 91
+      printf 'STEP=%s EVIDENCE=%s\\n' "$1" "\${UI_EVIDENCE_DIR:-}";;
   esac
   if [ "$1" = "\${FAIL_SCRIPT:-}" ]; then return 7; fi
 }
 sudo() { return 0; }
+bash() {
+  if [ "$#" -eq 1 ] && [ "$1" = scripts/ci-chromium.sh ]; then
+    printf '/stub/chrome\\n'
+  else
+    command bash "$@"
+  fi
+}
 source "$1"
 `;
 
@@ -47,6 +55,7 @@ describe("browser lane", () => {
     expect(rows(text)).toEqual([
       { script: "scripts/demo-build.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/ui-regression.ts", seconds: expect.any(Number), code: 0 },
+      { script: "scripts/ui-contexts-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/workspace-rows-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/pending-pane-switch-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/lan-exposure-notice-regression.ts", seconds: expect.any(Number), code: 0 },
@@ -60,13 +69,18 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(44);
+    expect(rows(text)).toHaveLength(49);
+    expect(rows(text).map((row) => row.script)).toContain("scripts/chat-virtual-browser-qa.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/pwa-update-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/portal-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/agy-chat-browser-qa.ts");
+    expect(rows(text).filter((row) => row.script === "scripts/ui-contexts-regression.ts")).toHaveLength(1);
     expect(rows(text).map((row) => row.script)).toContain("scripts/pending-pane-switch-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/lan-exposure-notice-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/chat-fallback-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/file-preview-text-browser-qa.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/virtual-source-browser-qa.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/repo-diff-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/terminal-viewport-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pane-paging-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/application-paging-regression.ts");
@@ -85,7 +99,7 @@ describe("browser lane", () => {
     for (const script of ["sticky-modifiers-regression.ts", "file-viewer-regression.ts"]) {
       expect(text).toMatch(new RegExp(`STEP=scripts/${script} EVIDENCE=.+/browser-evidence`));
     }
-    for (const script of ["ui-regression.ts", "key-bar-customization-demo-regression.ts"]) {
+    for (const script of ["ui-regression.ts", "ui-contexts-regression.ts", "key-bar-customization-demo-regression.ts"]) {
       expect(text).toContain(`STEP=scripts/${script} EVIDENCE=\n`);
     }
   });

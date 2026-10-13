@@ -196,6 +196,37 @@
 }
 
 /* not a fault: a lens herdr does not offer on this PC yet */
+/* the selection's quote button: a banner that is a button */
+.terminal-quote {
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.terminal-quote svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  flex: none;
+}
+
+.terminal-quote:hover {
+  border-color: var(--accent);
+}
+
+.terminal-quote:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-quote {
+    transition: none;
+  }
+}
+
 .terminal-banner-soon {
   border-color: var(--accent);
   color: var(--text);

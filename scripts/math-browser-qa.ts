@@ -37,6 +37,8 @@ try {
   await viteBuild({ configFile: join(repo, "vite.config.ts"), root, publicDir: false, logLevel: "warn", build: { outDir: output, emptyOutDir: true } });
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const path = new URL(request.url).pathname;
+    // the chat asks for the pane's slash commands (skill chips); this fixture has none
+    if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
     return new Response(Bun.file(join(output, path === "/" ? "index.html" : path.slice(1))));
   } });
 

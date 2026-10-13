@@ -158,7 +158,8 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   attachLimit: integerBetween(1, 50),
 } satisfies Record<keyof TelemetrySettings, (value: unknown) => boolean>;
 
-const TELEMETRY_SETTINGS_KEYS = Object.keys(TELEMETRY_SETTINGS_VALIDATORS) as (keyof TelemetrySettings)[];
+/** Every key the Worker (telemetry/worker.ts) accepts in a snapshot, and requires. */
+export const TELEMETRY_SETTINGS_KEYS = Object.keys(TELEMETRY_SETTINGS_VALIDATORS) as (keyof TelemetrySettings)[];
 
 /** Validate the complete snapshot and return a fresh object containing only schema keys. */
 export function telemetrySettings(value: unknown): TelemetrySettings | null {

@@ -58,8 +58,26 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
   /** the pane dropped on the right half, which is then the active one */
   const splitRight = async (page: Page, pane: string): Promise<void> => {
     const area = page.locator(".pane-split");
+    const source = page.locator(`.pane-select[title^="${pane} —"]`);
+    await source.waitFor({ state: "visible" });
+    await source.scrollIntoViewIfNeeded();
+    const from = (await source.boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    // Cross the browser's native drag threshold, then wait until App has observed dragstart
+    // before measuring the destination or moving into it (the area can still be settling).
+    await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 4, { steps: 2 });
+    await page.waitForFunction(() => document.querySelector(".split-drop")?.classList.contains("is-visible") === true);
     const box = (await area.boundingBox())!;
-    await page.locator(`.pane-select[title^="${pane} —"]`).dragTo(area, { targetPosition: { x: box.width * 0.8, y: box.height / 2 } });
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 8 });
+    // Crossing xterm's row spans can produce only dragenter/dragleave. Moving again on the
+    // same final element emits dragover, which must accept the pane before the drop.
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
+    await page.waitForFunction(() => {
+      const guide = document.querySelector(".split-drop");
+      return guide?.classList.contains("is-visible") === true && guide.getAttribute("data-side") === "right";
+    });
+    await page.mouse.up();
     await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
     await isActive(page, "right");
   };

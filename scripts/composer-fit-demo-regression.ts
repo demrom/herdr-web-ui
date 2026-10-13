@@ -238,6 +238,18 @@ try {
       });
       console.log("PASS agents at 350, 390, 800 and 1440px use one Stop/Send control with no Queue or dropdown");
 
+      // The saved-drafts trigger sits just before Send at the card's right end: its popover opens
+      // toward the inside of the card and stays inside the window at every width.
+      for (const width of [390, 800, 1280]) await withCard(browser, width, { agent: "claude", model: "gpt-5.6" }, async (page) => {
+        await draft(page);
+        await page.locator(".composer-stash-trigger").click();
+        const menu = page.locator(".composer-stash-menu");
+        await menu.waitFor();
+        const edges = await menu.evaluate((node) => { const box = node.getBoundingClientRect(); return { left: box.left, right: box.right, window: innerWidth }; });
+        assert.ok(edges.left >= 0 && edges.right <= edges.window, `${width}px: the saved-drafts popover stays inside the window: ${JSON.stringify(edges)}`);
+      });
+      console.log("PASS the saved-drafts popover stays inside the window at 390, 800 and 1280px");
+
       for (const width of [350, 390]) await withCard(browser, width, { agent: "codex", model: LONG_MODEL, mic: true }, async (page) => {
         await draft(page);
         await upload(page);

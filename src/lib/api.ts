@@ -28,6 +28,9 @@ import type {
   PanePlan,
   PaneReadResult,
   PaneResized,
+  RepoDiffFileList,
+  RepoDiffFilePatch,
+  RepoDiffScope,
   PaneSplit,
   PaneSwapped,
   PaneZoomed,
@@ -577,6 +580,42 @@ export async function fetchFileInfo(path: string, paneId: string | null, machine
 /** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */
 export function fileUrl(path: string, paneId: string | null, machineId = "local", download = false): string {
   return machinePath(machineId, `fs/file?${fileQuery(path, paneId)}${download ? "&download=1" : ""}`);
+}
+
+/**
+ * Which repository and which two of its states: the pane's folder (or `directory`, read when the
+ * pane is gone), and the working tree against the index, the index against HEAD, or two commits.
+ */
+export interface RepoDiffQuery {
+  paneId: string | null;
+  directory: string | null;
+  scope: RepoDiffScope;
+  /** `commit` only: the list's hashes, so a file is read from the same comparison */
+  base: string | null;
+  head: string | null;
+}
+
+function repoDiffQuery(query: RepoDiffQuery): URLSearchParams {
+  return new URLSearchParams({
+    ...(query.paneId ? { pane_id: query.paneId } : {}),
+    ...(query.directory ? { directory: query.directory } : {}),
+    scope: query.scope,
+    ...(query.scope === "commit" && query.base ? { base: query.base } : {}),
+    ...(query.scope === "commit" && query.head ? { head: query.head } : {}),
+  });
+}
+
+/** GET /api/workspace/diff/files: the files a comparison changed, with their status and counts. */
+export async function fetchRepoDiffFiles(query: RepoDiffQuery, machineId = "local"): Promise<RepoDiffFileList> {
+  return getJson<RepoDiffFileList>(machinePath(machineId, `workspace/diff/files?${repoDiffQuery(query).toString()}`));
+}
+
+/** GET /api/workspace/diff/file: one changed file's patch, as git prints it, or why there is none. */
+export async function fetchRepoDiffFile(query: RepoDiffQuery, path: string, oldPath: string | null, machineId = "local"): Promise<RepoDiffFilePatch> {
+  const params = repoDiffQuery(query);
+  params.set("path", path);
+  if (oldPath !== null) params.set("old_path", oldPath);
+  return getJson<RepoDiffFilePatch>(machinePath(machineId, `workspace/diff/file?${params.toString()}`));
 }
 
 export type { CreateTabRequest, CreateWorkspaceRequest } from "../../shared/protocol.ts";

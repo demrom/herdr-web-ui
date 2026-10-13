@@ -189,6 +189,15 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
       expect(response.status).toBe(403);
       if (method === "GET") expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
     }
+    // a repository's changes are file contents: refused like a file read, on this PC and through a PC's route
+    for (const path of ["workspace/diff/files", "workspace/diff/file", "machines/pc1/workspace/diff/files", "machines/pc1/workspace/diff/file", "machines/local/workspace/diff/file"]) {
+      const response = await fetch(`${base}/api/${path}?directory=${encodeURIComponent(root)}&path=devices.json`, { headers });
+      expect([path, response.status]).toEqual([path, 403]);
+      expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
+    }
+    for (const path of ["api//workspace/diff/file", "api/workspace//diff/file", "api/machines/pc1//workspace/diff/file"]) {
+      expect((await fetch(`${base}/${path}?directory=${encodeURIComponent(root)}&path=devices.json`, { headers })).status).toBe(404);
+    }
     // an empty segment must not turn a file read into "some other route" (the PC proxy drops it)
     for (const path of ["api//fs/file", "api/machines/pc1//fs/file", "api/machines/pc1/fs//file"]) {
       expect((await fetch(`${base}/${path}?path=${encodeURIComponent(join(root, "devices.json"))}`, { headers })).status).toBe(404);

@@ -28,7 +28,7 @@ export async function buildDemoApp(app: string, shared: string | undefined = pro
 
 /** The build itself: the app with a relative base, and the demo's transport beside it. */
 async function build(app: string): Promise<void> {
-  const client = Bun.spawnSync([join(repo, "node_modules/.bin/vite"), "build", "--base", "./", "--outDir", app, "--emptyOutDir", "--logLevel", "warn"], { cwd: repo });
+  const client = Bun.spawnSync([process.execPath, "--bun", join(repo, "node_modules/.bin/vite"), "build", "--base", "./", "--outDir", app, "--emptyOutDir", "--logLevel", "warn"], { cwd: repo });
   if (client.exitCode !== 0) throw new Error(`the demo's client did not build:\n${new TextDecoder().decode(client.stderr)}`);
   const transport = await Bun.build({
     entrypoints: [join(repo, "site/demo/transport.ts")], outdir: app,

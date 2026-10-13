@@ -56,11 +56,20 @@ try {
     await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "text-preview-mobile.png") });
   }
-  for (const path of ["headers", "body"]) {
-    const start = performance.now(); await open(path);
+  {
+    // no headers by the deadline: nothing to show
+    const start = performance.now(); await open("headers");
     await page.getByRole("alert").filter({ hasText: "The file could not be opened." }).waitFor();
-    assert.ok(performance.now() - start < 6_500, `${path} has a bounded deadline`);
+    assert.ok(performance.now() - start < 6_500, "headers has a bounded deadline");
     assert.equal(await page.locator(".file-viewer-text").count(), 0);
+  }
+  {
+    // a body that stalls: what arrived by the deadline is shown as a cut prefix, not an error
+    const start = performance.now(); await open("body");
+    await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).waitFor();
+    assert.ok(performance.now() - start < 6_500, "body has a bounded deadline");
+    assert.equal(await page.locator(".file-viewer-text").textContent(), "partial");
+    assert.ok(!(await page.locator("body").innerText()).includes("LATE BODY"));
   }
   const closingResponse = page.waitForResponse((response) => new URL(response.url()).searchParams.get("path") === "close");
   await open("close");
@@ -72,7 +81,7 @@ try {
   assert.ok(cancelled.some((url) => new URL(url).searchParams.get("path") === "close"), "closing aborts the active response");
   assert.deepEqual(errors, []);
   for (const timer of timers) clearTimeout(timer);
-  console.log("text preview: browser OK (HTTP errors, ignored Range and stale stat, UTF-8, header/body deadlines, close-abort and recovery)");
+  console.log("text preview: browser OK (HTTP errors, ignored Range and stale stat, UTF-8, header deadline, stalled body kept as a cut prefix, close-abort and recovery)");
 } finally {
   await browser?.close(); server?.stop(true); rmSync(root, { recursive: true, force: true });
 }

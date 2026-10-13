@@ -7,13 +7,31 @@ import { OpenFileContext } from "./filePaths.ts";
 import { SettingsProvider } from "./settings.ts";
 import { parseMarkdown } from "./markdown.ts";
 import { TEXT_PREVIEW_BYTES } from "./filePreviewText.ts";
-import { hasPreview, PREVIEW_ELEMENT_LIMIT, previewElements } from "./textPreview.ts";
+import { hasPreview, PREVIEW_CHUNK_ELEMENTS, PREVIEW_ELEMENT_LIMIT, previewChunks, previewElements } from "./textPreview.ts";
 
 describe("hasPreview", () => {
   it("gives only Markdown a Preview", () => {
     expect(hasPreview("markdown")).toBe(true);
     expect(hasPreview("typescript")).toBe(false);
     expect(hasPreview(null)).toBe(false);
+  });
+});
+
+describe("previewChunks", () => {
+  it("splits a long Preview into whole blocks under the chunk size, in order and complete", () => {
+    const blocks = parseMarkdown("# Notes\n\nA paragraph of ordinary notes, with *emphasis* and a [link](./notes.txt).\n\n".repeat(4_000), 0, true);
+    const chunks = previewChunks(blocks);
+    expect(chunks.length).toBeGreaterThan(5);
+    expect(chunks.flat()).toEqual(blocks);
+    for (const chunk of chunks) expect(previewElements(chunk) - 1).toBeLessThanOrEqual(PREVIEW_CHUNK_ELEMENTS);
+  });
+
+  it("keeps a short Preview, an empty one and an oversized block each whole", () => {
+    const short = parseMarkdown("# Title\n\nsome text", 0, true);
+    expect(previewChunks(short)).toEqual([short]);
+    expect(previewChunks([])).toEqual([]);
+    const big = parseMarkdown("- a\n".repeat(3_000), 0, true);
+    expect(previewChunks([...big, ...short])).toEqual([big, short]);
   });
 });
 

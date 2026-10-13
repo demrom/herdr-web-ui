@@ -12,6 +12,17 @@ const root = mkdtempSync(join(tmpdir(), "herdr-history-browser-"));
 let server: ReturnType<typeof Bun.serve> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 const releases: Array<() => void> = [];
+const routeEvents = new EventTarget();
+function nextRoute(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const arrived = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => {
+      routeEvents.removeEventListener(name, arrived);
+      reject(new Error(`No fixture request for ${name}`));
+    }, 10_000);
+    routeEvents.addEventListener(name, arrived, { once: true });
+  });
+}
 try {
   const build = await Bun.build({ entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
   assert.ok(build.success, String(build.logs));
@@ -31,17 +42,17 @@ try {
   const errors: string[] = [];
   page.on("pageerror", (error) => { errors.push(error.message); console.error(error.stack); });
   let epoch = "one", newest = "old newest", before: string | null = "one:100";
-  let holdOlder = false, olderRequested = false;
+  let holdOlder = false;
   let product = false;
   let unavailable = false, terminalFails = false;
-  let holdTerminal = false, terminalReads = 0;
+  let holdTerminal = false;
   let terminalText = "Fictional terminal fallback";
   /** product panes ("machine/pane") whose conversation requests wait for the script, and those that fail */
   const held = new Set<string>(), failing = new Set<string>();
   const pending: Array<{ key: string; answer: (status: number) => Promise<void> }> = [];
   const user = (text: string) => ({ role: "user", ts: text, parts: [{ kind: "text", text }] });
   await page.route("**/api/**/read?*", async (route) => {
-    terminalReads += 1;
+    routeEvents.dispatchEvent(new Event("terminal"));
     if (holdTerminal) await new Promise<void>((resolve) => releases.push(resolve));
     await (terminalFails
       ? route.fulfill({ status: 503, json: { error: { code: "timeout", message: "fictional terminal read failed" } } })
@@ -68,7 +79,10 @@ try {
         : route.fulfill({ status, json: { error: { code: "unavailable", message: "conversation unavailable" } } });
       // answered as it arrives unless its pane is held: a poll an abandoned mount left
       // behind can then never stand in for the request an assertion waits on
-      if (held.has(key)) await new Promise<void>((resolve) => pending.push({ key, answer: (status) => answer(status).finally(resolve) }));
+      if (held.has(key)) await new Promise<void>((resolve) => {
+        pending.push({ key, answer: (status) => answer(status).finally(resolve) });
+        routeEvents.dispatchEvent(new Event(key));
+      });
       else await answer(failing.has(key) ? 503 : 200);
       return;
     }
@@ -83,7 +97,7 @@ try {
       return;
     }
     if (url.searchParams.has("before")) {
-      olderRequested = true;
+      routeEvents.dispatchEvent(new Event("older"));
       if (holdOlder) await new Promise<void>((resolve) => releases.push(resolve));
       await route.fulfill({ json: { source: "omp-transcript", history_id: captured, cursor: null, turns: [user("old earlier")] } });
     } else {
@@ -115,13 +129,16 @@ try {
 
   // Start an older-page request, then observe clear before it completes.
   holdOlder = true;
+  const olderStarted = nextRoute("older");
   await page.locator(".chat-older").click();
-  while (!olderRequested) await Bun.sleep(20);
+  await olderStarted;
   epoch = "two"; newest = ""; before = null;
   await refresh();
   await page.getByText("No conversation yet — say something below", { exact: true }).waitFor();
+  const olderAnswered = page.waitForResponse((response) => new URL(response.url()).searchParams.has("before"));
   releases.splice(0).forEach((release) => release());
-  await page.waitForTimeout(100);
+  await (await olderAnswered).finished();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   assert.equal(await page.locator(".chat-turn").count(), 0, "late older page cannot revive cleared history");
   assert.equal(await page.locator(".chat-older").count(), 0);
   console.log("PASS clear while earlier page is in flight and empty history before a new prompt");
@@ -189,13 +206,10 @@ try {
     await page.locator(".work-row-head").click();
     await page.locator(".chat-tool-more").click();
     const lateOutput = await page.evaluate(() => window.qa.requests.length - 1);
-    const readsBefore = terminalReads;
     terminalFails = terminalFailure; unavailable = true; holdTerminal = true;
+    const terminalStarted = nextRoute("terminal");
     await refresh();
-    for (const deadline = Date.now() + 10_000; terminalReads === readsBefore;) {
-      assert.ok(Date.now() < deadline, "missing terminal fallback request");
-      await Bun.sleep(20);
-    }
+    await terminalStarted;
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     assert.equal(await page.getByText(newest, { exact: true }).count(), 0, "refused history must disappear while terminal fallback is still pending");
     holdTerminal = false;
@@ -254,12 +268,9 @@ try {
   for (const status of [200, 503]) {
     held.add("remote-pc/b");
     const ended = await page.evaluate(() => window.qa.answered.filter((key) => key === "remote-pc/b").length);
+    const remoteStarted = nextRoute("remote-pc/b");
     await select("b", "remote-pc");
-    const deadline = Date.now() + 10_000;
-    while (!pending.some((request) => request.key === "remote-pc/b")) {
-      assert.ok(Date.now() < deadline, "missing delayed B request");
-      await Bun.sleep(20);
-    }
+    await remoteStarted;
     await select("a", "remote-pc");
     await page.getByText("history remote-pc/a", { exact: true }).waitFor();
     held.delete("remote-pc/b");

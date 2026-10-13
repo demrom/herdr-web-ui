@@ -13,7 +13,7 @@ const app = mkdtempSync(join(tmpdir(), "herdr-pane-paging-demo-"));
 // Capture only fictional paging fixtures for PR evidence.
 const evidence = process.env.UI_EVIDENCE_DIR;
 const settled = (page: Page) => page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
-const returnControl = (page: Page) => page.locator(".pane-frame.is-current .chat-view .chat-new-messages");
+const returnControl = (page: Page) => page.locator(".pane-frame.is-current .chat-new-messages");
 const inputs = (page: Page): Promise<unknown[]> => page.evaluate(() => (window as unknown as { pagingInputs: unknown[] }).pagingInputs);
 const scrollGeometry = (page: Page) => page.evaluate(() => {
   const node = document.querySelector<HTMLElement>(".pane-frame.is-current .chat-view");
@@ -23,7 +23,7 @@ const scrollGeometry = (page: Page) => page.evaluate(() => {
     gap: node.scrollHeight - node.clientHeight - node.scrollTop, rectHeight: node.getBoundingClientRect().height,
     inlineStyle: node.getAttribute("style"), computedHeight: getComputedStyle(node).height,
     content: content && { height: content.getBoundingClientRect().height, inlineStyle: content.getAttribute("style"), source: content.dataset.conversationSource },
-    returnControls: [...node.querySelectorAll<HTMLElement>(".chat-new-messages")].map((button) => ({ label: button.getAttribute("aria-label"), text: button.textContent, className: button.className, height: button.getBoundingClientRect().height })),
+    returnControls: [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current .chat-new-messages")].map((button) => ({ label: button.getAttribute("aria-label"), text: button.textContent, className: button.className, height: button.getBoundingClientRect().height })),
     loading: node.querySelector(".chat-inline-state")?.textContent ?? null };
 });
 async function followedBottom(page: Page, phase: string): Promise<void> {

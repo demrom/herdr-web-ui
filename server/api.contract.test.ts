@@ -21,6 +21,7 @@ import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
 import { forgetTranscriptState } from "./conversation.ts";
+import type { RepoDiffFileList, RepoDiffFilePatch } from "../shared/protocol.ts";
 
 /**
  * Contract test for herdr-web-ui's HTTP + WS surface.
@@ -3039,4 +3040,59 @@ it("refuses cross-origin changes while allowing same-origin and CLI requests", a
       expect(response.status).toBe(200);
     }
   } finally { instance.stop(); await workspaceClose(created.workspace.workspace_id); rmSync(root, { recursive: true, force: true }); }
+});
+
+describe("repository diff of a pane's folder", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-test-repo-diff-")));
+  let workspaceId: string | null = null;
+  afterAll(async () => {
+    if (workspaceId) await workspaceClose(workspaceId).catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("reads the repository the pane sits in, a folder named from it, and a named folder once the pane is gone", async () => {
+    const git = (...args: string[]) => {
+      const result = Bun.spawnSync(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
+      if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
+    };
+    git("init", "-q", "-b", "main");
+    mkdirSync(join(root, "sub"));
+    writeFileSync(join(root, "a.txt"), "one\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "first");
+    writeFileSync(join(root, "a.txt"), "two\n");
+    // the pane sits below the repository's top, and in no repository of its own
+    const created = await workspaceCreate({ cwd: join(root, "sub"), label: "herdr-web-ui-test-repo-diff" });
+    workspaceId = created.workspace.workspace_id;
+    const pane = `pane_id=${encodeURIComponent(created.root_pane.pane_id)}`;
+    const expected: RepoDiffFileList["files"] = [{ path: "a.txt", old_path: null, status: "modified", additions: 1, deletions: 1, binary: false }];
+    for (const url of [
+      `${base()}/api/workspace/diff/files?${pane}`,
+      `${base()}/api/machines/local/workspace/diff/files?${pane}`,
+      `${base()}/api/workspace/diff/files?${pane}&directory=..`,
+      `${base()}/api/workspace/diff/files?pane_id=no-such-pane&directory=${encodeURIComponent(root)}`,
+    ]) {
+      const response = await fetch(url);
+      expect([url, response.status]).toEqual([url, 200]);
+      const list = (await response.json()) as RepoDiffFileList;
+      expect(list.repository).toMatchObject({ root, branch: "main", detached: false, unborn: false });
+      expect(list.files).toEqual(expected);
+    }
+    const file = await fetch(`${base()}/api/workspace/diff/file?${pane}&path=a.txt`);
+    expect(file.status).toBe(200);
+    const answer = (await file.json()) as RepoDiffFilePatch;
+    expect(answer).toMatchObject({ file: expected[0], unavailable: null, truncated: false });
+    expect(answer.patch).toStartWith("diff --git a/a.txt b/a.txt\n");
+    expect(answer.patch).toEndWith("-one\n+two\n");
+
+    const gone = await fetch(`${base()}/api/workspace/diff/files?pane_id=no-such-pane`);
+    expect(gone.status).toBe(404);
+    expect(typeof ((await gone.json()) as ApiError).error.code).toBe("string");
+    const relative = await fetch(`${base()}/api/workspace/diff/files?pane_id=no-such-pane&directory=sub`);
+    expect(relative.status).toBe(400);
+    expect(((await relative.json()) as ApiError).error.code).toBe("invalid_cwd");
+    const posted = await fetch(`${base()}/api/workspace/diff/files?${pane}`, { method: "POST", headers: { "x-herdr-machine": "1" } });
+    expect(posted.status).toBe(400);
+    expect(((await posted.json()) as ApiError).error.code).toBe("method_not_allowed");
+  });
 });
