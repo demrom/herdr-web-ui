@@ -265,6 +265,9 @@ export function Composer({
   const usageWindows = usage === undefined ? [] : statusWindows(usage);
   const usageLimit = usageWindows[0];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // iOS can blur on tap despite pointerdown cancellation (WebKit bug 322721). Cancel the
+  // synthesized mousedown instead, remembering touch origin so real mouse focus stays native.
+  const touchAction = useRef(false);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const statusRef = useRef<HTMLDivElement | null>(null);
   const hintRef = useRef<HTMLSpanElement | null>(null);
@@ -1244,6 +1247,8 @@ export function Composer({
               aria-label={t("Stop agent")}
               title={t("Stop agent")}
               disabled={!connected}
+              onPointerDown={(event) => { touchAction.current = event.pointerType === "touch"; }}
+              onMouseDown={(event) => { if (touchAction.current) event.preventDefault(); }}
               onClick={onAbort}
             >
               <Square aria-hidden="true" />
@@ -1255,6 +1260,8 @@ export function Composer({
               aria-label={t("Send message")}
               title={t("Send message")}
               disabled={!connected || uploading || sending || text.trim().length === 0}
+              onPointerDown={(event) => { touchAction.current = event.pointerType === "touch"; }}
+              onMouseDown={(event) => { if (touchAction.current) event.preventDefault(); }}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />

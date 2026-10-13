@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type Browser, type Page } from "playwright-core";
+import { chromium, type Browser, type Locator, type Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
@@ -210,6 +210,96 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      // Chromium has no soft keyboard. Emulate only its visual viewport geometry: opening on
+      // composer focus and collapsing on blur. The real viewport module moves the real app.
+      for (const input of ["webkit-tap", "native-touch"] as const) for (const standalone of [false, true]) for (const agent of ["claude", "codex"] as const) for (const status of ["idle", "working"] as const) await withCard(browser, 390, { agent, status, model: "gpt-5.6" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await page.evaluate((standalone) => {
+          const matchMedia = window.matchMedia.bind(window);
+          window.matchMedia = (query) => query === "(display-mode: standalone)" ? { matches: standalone } as MediaQueryList : matchMedia(query);
+          const viewport = window.visualViewport!;
+          let height = 844;
+          Object.defineProperty(viewport, "height", { configurable: true, get: () => height });
+          const resize = (next: number) => { height = next; viewport.dispatchEvent(new Event("resize")); };
+          const box = document.querySelector(".composer-text")!;
+          box.addEventListener("focus", () => resize(500));
+          box.addEventListener("blur", () => resize(844));
+          const socket = (window as any).fitSocket;
+          const send = socket.send.bind(socket);
+          (window as any).sentFrames = [];
+          socket.send = (raw: string) => { (window as any).sentFrames.push(JSON.parse(raw)); send(raw); };
+        }, standalone);
+        const tap = async (control: Locator): Promise<void> => {
+          if (input === "native-touch") { await control.tap(); return; }
+          // Emulate WebKit bug 322721 at the browser boundary, not Chromium's compat-event
+          // suppression: a cancelled touch pointerdown can still be followed by a native blur.
+          // Only cancelling the synthesized mousedown prevents that focus step. This is a
+          // source-derived model, not execution of iOS WebKit or its on-screen keyboard.
+          await control.evaluate((node) => {
+            const bounds = node.getBoundingClientRect();
+            const init = { bubbles: true, cancelable: true, clientX: bounds.x + bounds.width / 2, clientY: bounds.y + bounds.height / 2, button: 0 };
+            node.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerType: "touch", pointerId: 7, isPrimary: true, buttons: 1 }));
+            node.dispatchEvent(new PointerEvent("pointerup", { ...init, pointerType: "touch", pointerId: 7, isPrimary: true }));
+            if (node.dispatchEvent(new MouseEvent("mousedown", { ...init, buttons: 1 })) && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+            // Blur resizes the real app; release/click are hit-tested where the finger was.
+            const target = document.elementFromPoint(init.clientX, init.clientY);
+            target?.dispatchEvent(new MouseEvent("mouseup", init));
+            target?.dispatchEvent(new MouseEvent("click", { ...init, detail: 1 }));
+          });
+        };
+        await box.fill(`one touch from ${agent} ${status}`);
+        await page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
+        const send = page.getByRole("button", { name: "Send message", exact: true });
+        const before = (await send.boundingBox())!;
+        await tap(send);
+        const evidence = await page.evaluate(() => ({
+          focused: document.activeElement === document.querySelector(".composer-text"),
+          keyboard: document.documentElement.hasAttribute("data-keyboard"),
+          frames: (window as any).sentFrames.filter((frame: any) => frame.type === "submit"),
+          bottom: document.querySelector(".composer-surface")!.getBoundingClientRect().bottom,
+        }));
+        assert.equal(evidence.frames.length, 1, `${input} standalone=${standalone} ${agent} ${status}: one touch submits once: ${JSON.stringify({ before, ...evidence })}`);
+        assert.equal(evidence.frames[0].text, `one touch from ${agent} ${status}`);
+        assert.equal(evidence.focused, true, `${agent} ${status}: Send keeps composer focus`);
+        assert.equal(evidence.keyboard, true, `${agent} ${status}: Send keeps the keyboard open`);
+        await page.waitForFunction(() => (document.querySelector(".composer-text") as HTMLTextAreaElement).value === "");
+        if (status === "working") {
+          await page.locator(".pending-message-bubble").waitFor();
+          await tap(page.getByRole("button", { name: "Stop agent", exact: true }));
+          const stopped = await page.evaluate(() => (window as any).sentFrames.filter((frame: any) => frame.type === "input" && frame.text === "\u001b"));
+          assert.equal(stopped.length, 1, `${agent}: one touch on Stop sends Escape once`);
+          assert.equal(await box.evaluate((node) => node === document.activeElement), true, "Stop keeps composer focus");
+          await tap(page.getByRole("button", { name: `Send now: one touch from ${agent} ${status}`, exact: true }));
+          await page.locator(".pending-message-bubble").waitFor({ state: "detached" });
+          assert.equal(await box.evaluate((node) => node === document.activeElement), true, "Send now keeps composer focus");
+        }
+        const conversation = await page.evaluate(async (paneId) => await (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json(), panes.api);
+        assert.equal(JSON.stringify(conversation).split(`one touch from ${agent} ${status}`).length - 1, 1, "the conversation receives the message once");
+        assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-keyboard")), true, "the keyboard stays open for the next message");
+      });
+      console.log("PASS native touch and emulated WebKit taps send/stop/send now for Claude and Codex, idle/working, browser/standalone, without closing the keyboard");
+
+      // Mouse focus and hardware-keyboard activation retain their native behavior, including
+      // on a touch screen with a hardware keyboard. No pointer handler replaces click activation.
+      for (const width of [390, 1440]) await withCard(browser, width, { model: "gpt-5.6", status: "idle" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const send = page.getByRole("button", { name: "Send message", exact: true });
+        await box.fill("send with a hardware keyboard");
+        await send.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => (document.querySelector(".composer-text") as HTMLTextAreaElement).value === "");
+        await box.fill("send with a mouse");
+        const bounds = (await send.boundingBox())!;
+        await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+        await page.mouse.down();
+        assert.equal(await send.evaluate((node) => node === document.activeElement), true, "a mouse still focuses Send before it is disabled by submission");
+        await page.mouse.up();
+        await page.waitForFunction(() => (document.querySelector(".composer-text") as HTMLTextAreaElement).value === "");
+        const conversation = await page.evaluate(async (paneId) => await (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json(), panes.api);
+        for (const text of ["send with a hardware keyboard", "send with a mouse"]) assert.equal(JSON.stringify(conversation).split(text).length - 1, 1);
+      });
+      console.log("PASS mouse and hardware-keyboard Send on phone and desktop");
+
       // One primary control across agents: Stop with an empty working draft, Send with text.
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);

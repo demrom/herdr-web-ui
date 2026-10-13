@@ -36,6 +36,8 @@ export function PendingMessages({ messages, active = true, connected, blocked, u
   const activeRef = useRef(active);
   activeRef.current = active;
   const rootRef = useRef<HTMLOListElement | null>(null);
+  // Keep the composer focused on iOS too: pointerdown cancellation alone still permits blur.
+  const touchAction = useRef(false);
   const [copied, setCopied] = useState<string | null>(null);
   const restoreFocus = (keyboard: boolean, target: HTMLButtonElement, stack: Element | null, owner: string | null): void => {
     const root = rootRef.current;
@@ -56,6 +58,8 @@ export function PendingMessages({ messages, active = true, connected, blocked, u
           <span className="pending-message-note" role="status">{status}</span>
           {!uncertain && <button type="button" className="icon-button pending-message-action pending-message-send"
             aria-label={`${t("Send now")}: ${message.text}`} aria-busy={busy || undefined} title={t("Send now")}
+            onPointerDown={(event) => { touchAction.current = event.pointerType === "touch"; }}
+            onMouseDown={(event) => { if (touchAction.current) event.preventDefault(); }}
             disabled={!connected || blocked || busy} onClick={(event) => {
               const target = event.currentTarget, keyboard = event.detail === 0, stack = target.closest(".terminal-stack"), owner = stack?.getAttribute("data-pane-owner") ?? null;
               void onSendNow(message.id).finally(() => restoreFocus(keyboard, target, stack, owner));
