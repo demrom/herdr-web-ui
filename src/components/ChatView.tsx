@@ -52,6 +52,7 @@ import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
+import { touchHistoryChat } from "../lib/chatHistoryCache.ts";
 import { chatRestoreIndex, chatTurnAnchor, readChatPosition, rememberChatPosition, type ChatPosition } from "../lib/chatScrollMemory.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
@@ -717,7 +718,7 @@ function TerminalFallback({ paneId }: { paneId: string }) {
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
 export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
-  const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
+  const { fetchPaneConversation, cachedPaneHistory, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   const machineId = useMachineId();
   const diffContext = useMemo(() => onOpenDiff ? { openDiff: onOpenDiff, cwd } : null, [onOpenDiff, cwd]);
@@ -836,6 +837,10 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     setSentOver(null);
   }, [paneId, machineId]);
 
+  useEffect(() => {
+    if (settings.chatHistoryCache && visible && active) void touchHistoryChat(paneStorageId(machineId, paneId));
+  }, [paneId, machineId, visible, active, settings.chatHistoryCache]);
+
   const closeFind = useCallback(() => {
     setFindOpen(false); setMatchKey(null);
     const node = scroller.current;
@@ -885,6 +890,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
+    let restoreCache = true;
     /** The turns between the held start and where the newest page now starts, a page at a time; null when they cannot be joined. */
     const turnsBetween = async (held: string | null, start: string): Promise<ConversationTurn[] | null> => {
       const pages: ConversationTurn[][] = [];
@@ -909,6 +915,27 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     const read = async (): Promise<void> => {
       let generation = olderGeneration.current;
       try {
+        if (settings.chatHistoryCache && restoreCache) {
+          restoreCache = false;
+          const saved = await cachedPaneHistory(paneId);
+          if (cancelled || generation !== olderGeneration.current) return;
+          if (saved && lastAnswer.current === null) {
+            if (loadedChatTimeline() === null) {
+              await loadChatTimeline();
+              if (cancelled || generation !== olderGeneration.current) return;
+            }
+            const { newest, older, cursor } = saved;
+            history.current = newest.history_id; setHistoryId(newest.history_id);
+            olderCount.current = older.length; setOlder(older); setOlderCursor(cursor);
+            heldFrom.current = older.length > 0 ? newest.cursor ?? null : null;
+            const next: ChatState = { source: "conversation", conversationSource: newest.source, turns: newest.turns, messages: [], truncated: false, activity: newest.activity };
+            signature.current = JSON.stringify(next); setState(next); setLoaded(true);
+            setAbandoned(newest.abandoned ?? null);
+            slots.current = createChatRowSlots({ machineId, paneId, historyId: newest.history_id ?? null, incarnation: ++incarnation.current }, older.length + newest.turns.length);
+            lastAnswer.current = newest;
+            onMetadataRef.current?.(paneId, newest.metadata ?? null);
+          }
+        }
         let conversation;
         try {
           conversation = await fetchPaneConversation(paneId, heldFrom.current === null ? undefined : { from: heldFrom.current });
@@ -925,6 +952,9 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
         if (conversation.source !== "scrollback" && loadedChatTimeline() === null) {
           await loadChatTimeline();
           if (cancelled || generation !== olderGeneration.current) return;
+        }
+        if (settings.chatHistoryCache && conversation !== lastAnswer.current && conversation.replace_from === 0 && lastAnswer.current !== null) {
+          dropOlder(); generation = olderGeneration.current;
         }
         if (history.current !== conversation.history_id) {
           dropOlder(); generation = olderGeneration.current;
@@ -1006,13 +1036,13 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       onConversationWatch?.(paneId, false);
       conversationRefresh.stop();
     };
-  }, [paneId, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
+  }, [paneId, fetchPaneConversation, cachedPaneHistory, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent, settings.chatHistoryCache]);
 
   // Sends, status/history repairs and visibility return read immediately without cancelling
   // the answer in flight. The reader is installed before this effect requests its first read.
   useEffect(() => {
     if (visible) conversationRefresh.refresh();
-  }, [paneId, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
+  }, [paneId, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent, settings.chatHistoryCache]);
 
   // Mount/visibility return already read immediately; only a changed push key invalidates.
   useEffect(() => {

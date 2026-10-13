@@ -70,6 +70,9 @@ import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
 import { chatReadDeadlineMs, withChatReadDeadline } from "./chatReadDeadline.ts";
+import { loadSettings } from "./settings.ts";
+import { paneStorageId } from "../../shared/machines.ts";
+import { clearHistoryCache, HISTORY_CACHE_EVENT, readHistoryChat, readHistoryPage, saveHistoryPage } from "./chatHistoryCache.ts";
 
 /** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
 export function fetchRemoteAccess(): Promise<RemoteAccess> {
@@ -177,6 +180,7 @@ export class ApiError extends Error {
 export const routeMissing = (error: unknown): boolean => error instanceof ApiError && error.status === 404 && error.code === "not_found";
 
 async function errorFrom(url: string, response: Response): Promise<ApiError> {
+  if (response.status === 401) await clearHistoryCache();
   let detail = response.statusText;
   let code: string | null = null;
   try {
@@ -248,6 +252,15 @@ interface ConversationAnswer {
   bytes: number;
 }
 const conversationAnswers = new Map<string, ConversationAnswer>();
+// Clear revokes this view's permission to persist; reopening explicitly acquires the new epoch.
+const conversationCacheEpochs = new Map<string, number>();
+let historyCacheGeneration = 0;
+if (typeof window !== "undefined") window.addEventListener(HISTORY_CACHE_EVENT, (event) => {
+  if ((event as CustomEvent<{ cleared: boolean }>).detail.cleared) {
+    historyCacheGeneration += 1;
+    conversationAnswers.clear();
+  }
+});
 const CONVERSATION_ANSWERS_KEPT = 16;
 /** …and this much of them, about four ordinary conversation pages each. */
 const CONVERSATION_ANSWERS_BYTES = 8 * 1024 * 1024;
@@ -282,7 +295,11 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
   if (page.since !== undefined) query.set("since", page.since);
   if (page.from !== undefined) query.set("from", page.from);
   const url = machinePath(machineId, `pane/conversation?${query.toString()}`);
-  const polled = page.before === undefined;
+  if (loadSettings().chatHistoryCache) return fetchCachedConversation(paneId, machineId, url);
+  return fetchLiveConversation(url, page.before === undefined, machineId);
+}
+
+async function fetchLiveConversation(url: string, polled: boolean, machineId: string): Promise<ConversationResponse> {
   const known = polled ? conversationAnswers.get(url) : undefined;
   const { response, body } = await withChatReadDeadline(async (signal) => {
     const response = await fetch(url, { cache: "no-store", signal, ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
@@ -302,6 +319,81 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
   if (etag !== null) {
     conversationAnswers.set(url, { etag, body, bytes: conversationAnswerBytes(body, response.headers.get("content-length"), response.headers.get("content-encoding")) });
     trimConversationAnswers(url);
+  }
+  return body;
+}
+
+/** Restore only contiguous pages of the same history; native REST still validates the newest page. */
+export async function cachedPaneHistory(paneId: string, machineId = "local"): Promise<{ newest: ConversationResponse; older: ConversationResponse["turns"]; cursor: string | null | undefined } | null> {
+  if (!loadSettings().chatHistoryCache) return null;
+  const chat = await readHistoryChat(paneStorageId(machineId, paneId));
+  if (!chat) return null;
+  conversationCacheEpochs.set(paneStorageId(machineId, paneId), chat.epoch);
+  const url = machinePath(machineId, `pane/conversation?${new URLSearchParams({ pane_id: paneId })}`);
+  const newest = chat.pages.find((page) => page.url === url)?.body;
+  if (!newest || newest.source === "scrollback") return null;
+  const page = chat.pages.find((page) => page.url === url)!;
+  if (page.etag !== null) conversationAnswers.set(url, { body: newest, etag: page.etag, bytes: page.bytes });
+  trimConversationAnswers(url);
+  let cursor = newest.cursor;
+  const older: ConversationResponse["turns"] = [];
+  const visited = new Set<string>();
+  while (typeof cursor === "string" && !visited.has(cursor)) {
+    visited.add(cursor);
+    const before = chat.pages.find((page) => new URL(page.url, location.href).searchParams.get("before") === cursor && page.body.history_id === newest.history_id);
+    if (!before) break;
+    older.unshift(...before.body.turns);
+    cursor = before.body.cursor;
+  }
+  return { newest, older, cursor };
+}
+
+async function fetchCachedConversation(paneId: string, machineId: string, url: string): Promise<ConversationResponse> {
+  const generation = historyCacheGeneration;
+  const chat = paneStorageId(machineId, paneId);
+  const saved = await readHistoryPage(chat, url);
+  if (saved === null) return fetchLiveConversation(url, !new URL(url, location.href).searchParams.has("before"), machineId);
+  if (!conversationCacheEpochs.has(chat)) conversationCacheEpochs.set(chat, saved.epoch);
+  const held = conversationAnswers.get(url);
+  let known = held?.body.delta_cursor ? held : saved?.page;
+  const request = new URL(url, location.href);
+  if (!known && request.searchParams.has("from")) {
+    const latest = new URL(request); latest.searchParams.delete("from");
+    known = (await readHistoryPage(chat, latest.pathname + latest.search))?.page;
+  }
+  request.searchParams.set("incremental", "1");
+  if (known?.body.delta_cursor) request.searchParams.set("delta", known.body.delta_cursor);
+  const { response, body } = await withChatReadDeadline(async (signal) => {
+    const response = await fetch(request.pathname + request.search, { cache: "no-store", signal,
+      ...(known?.etag ? { headers: { "if-none-match": known.etag } } : {}) });
+    if (response.status === 304 && known) return { response, body: known.body };
+    if (!response.ok) throw await errorFrom(url, response);
+    const answer = await response.json() as ConversationResponse;
+    if (answer.replace_from !== undefined && answer.replace_from > 0) {
+      const drop = answer.drop_before ?? 0;
+      if (!known || !Number.isSafeInteger(drop) || drop < 0 || !Number.isSafeInteger(answer.replace_from)
+        || answer.replace_from + drop > known.body.turns.length || answer.history_id !== known.body.history_id) throw new Error("Invalid conversation delta");
+      answer.turns = [...known.body.turns.slice(drop, drop + answer.replace_from), ...answer.turns];
+    }
+    // A complete initial read does not prove that any visible older prefix is stale.
+    if (!request.searchParams.has("delta")) delete answer.replace_from;
+    return { response, body: answer };
+  }, chatReadDeadlineMs(machineId));
+  if (historyCacheGeneration !== generation || !loadSettings().chatHistoryCache) return body;
+  const etag = response.headers.get("etag") ?? (response.status === 304 ? known?.etag ?? null : null);
+  conversationAnswers.delete(url);
+  if (etag) { conversationAnswers.set(url, { etag, body, bytes: conversationAnswerBytes(body, null) }); trimConversationAnswers(url); }
+  const alreadyStored = response.status === 304 && saved.page !== undefined
+    && saved.page.etag === etag && saved.page.body.delta_cursor === body.delta_cursor;
+  if (!alreadyStored && body.source !== "scrollback" && conversationCacheEpochs.get(chat) === saved.epoch) {
+    const reset = known !== undefined && response.status !== 304 && (body.replace_from === 0 || body.history_id !== known.body.history_id);
+    let latestUrl: string | undefined;
+    // Commit the held-start page and its reopening alias in the same atomic transaction.
+    if (request.searchParams.has("from")) {
+      const latest = new URL(url, location.href); latest.searchParams.delete("from");
+      latestUrl = latest.pathname + latest.search;
+    }
+    await saveHistoryPage({ chat, url, body, etag }, saved.epoch, reset, saved.revision, latestUrl);
   }
   return body;
 }
@@ -326,6 +418,7 @@ export async function fetchHealth(): Promise<HealthInfo> {
  * a mismatch.
  */
 export async function authenticate(token: string): Promise<void> {
+  await clearHistoryCache();
   const response = await fetch("/api/auth", {
     method: "POST",
     headers: { "content-type": "application/json", "x-herdr-machine": "1" },
@@ -336,6 +429,7 @@ export async function authenticate(token: string): Promise<void> {
 
 /** POST /api/devices/pair: the code shown on the PC, once; the server answers with this device's own HttpOnly cookie. */
 export async function pairDevice(code: string, label: string): Promise<void> {
+  await clearHistoryCache();
   const response = await fetch("/api/devices/pair", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ code, label }) });
   if (!response.ok) throw await errorFrom("/api/devices/pair", response);
 }
@@ -358,6 +452,7 @@ export async function revokeDevice(id: string): Promise<void> {
 
 /** DELETE /api/auth: clears the session and device cookies, so the next health check reports the gate again. */
 export async function signOut(): Promise<void> {
+  await clearHistoryCache();
   const response = await fetch("/api/auth", { method: "DELETE" });
   if (!response.ok) throw await errorFrom("/api/auth", response);
 }
@@ -756,7 +851,11 @@ export async function sendTestPush(endpoint: string): Promise<void> {
   await sendJson("/api/push/test", "POST", { endpoint });
 }
 
-export function fetchBridgeHealth(): Promise<BridgeHealth> { return getJson("/api/health?scope=bridge"); }
+export async function fetchBridgeHealth(): Promise<BridgeHealth> {
+  const health = await getJson<BridgeHealth>("/api/health?scope=bridge");
+  if (health.auth.required && !health.auth.authenticated) await clearHistoryCache();
+  return health;
+}
 export async function fetchMachines(signal?: AbortSignal): Promise<Machine[]> {
   const response = await fetch("/api/machines", { signal });
   if (!response.ok) throw await errorFrom("/api/machines", response);
