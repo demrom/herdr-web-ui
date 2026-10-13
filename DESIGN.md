@@ -12,7 +12,7 @@ chrome color, amber: focus, the chosen lens, the terminal cursor and the user's 
 buttons). Agent states carry the remaining saturated colors and none of them is amber. The user's
 chat turns are neutral raised cards, so a long thread never turns into a wall of color. Dark is the
 default, light follows the same hierarchy, and comfortable or compact density changes scale without
-changing information architecture. A neutral charcoal look and Catppuccin are
+changing information architecture. A neutral charcoal look, Catppuccin and Dracula are
 opt-in palettes (Settings → Appearance → Colors); amber stays the default and the look before settings load.
 
 The sidebar is one grid: a leading cell that says who or what a row is (the coding agent's brand
@@ -75,12 +75,12 @@ paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the them
 
 ### Opt-in palettes
 
-`settings.palette` (`amber` default, `charcoal`, `catppuccin`) is written as `data-palette`. The
-tables above are amber, the base blocks; the two opt-in palettes override them in
+`settings.palette` (`amber` default, `charcoal`, `catppuccin`, `dracula`) is written as `data-palette`. The
+tables above are amber, the base blocks; the three opt-in palettes override them in
 `[data-theme][data-palette]` blocks of `src/styles.css`, which hold the complete values.
 
 `--bubble-border` is the edge of the chat's user bubble. It is `transparent` where `--bg-elevated`
-alone parts the bubble from `--bg`: dark amber and dark charcoal. It is `var(--border)`
+alone parts the bubble from `--bg`: dark amber, dark charcoal and dark Dracula. It is `var(--border)`
 where the two surfaces sit close: every light theme (the `[data-theme="light"]` block sets it for
 all palettes) and dark Catppuccin, whose elevated surface is darker than its canvas.
 
@@ -104,6 +104,8 @@ all palettes) and dark Catppuccin, whose elevated surface is darker than its can
   until it passes AA: Mauve `#712fc6` (primary hover is plain Latte Mauve `#8839ef`), Blue `#1750bf`,
   Red `#ac0c2f`, Green `#28651b`. It keeps amber's rounded corners.
 
+- **Dracula** follows [draculatheme.com/spec](https://draculatheme.com/spec): Dracula Classic in dark, Alucard Classic in light. Dark content and terminal use Background `#282a36`; chrome uses the official VS Code port's BGDark `#21222c`, elevated BGLight `#343746`, hover BGLighter `#424450` and input BGDarker `#191a21`. Borders are Selection `#44475a` / Comment `#6272a4`, text Foreground `#f8f8f2`, dim and idle Comment lightened to `#a9b2cd` while preserving hue and saturation for AA on hover, accent and primary Purple `#bd93f9` (hover ANSI Bright Blue `#d6acff`) with Background text. States use Cyan `#8be9fd`, Red lightened to `#ffb8b8` for tinted badges, and Green `#50fa7b`; danger uses the same red. Light content and terminal use Alucard Background `#fffbeb`, chrome Floating `#efeddc`, elevated and input `#fffbeb`, hover Background Lighter `#ece9df`, borders Selection `#cfcfde` / Background Darker `#bcbab3`, text Foreground `#1f1f1f` and dim/idle Comment `#6c664b`. Accent and primary use Purple `#644ac9` (hover ANSI Bright Blue `#7862d0`) with Background text; Cyan `#035b82`, Red `#a32b1e` and Green `#116008` are darkened until their tinted badges pass AA on hover, with the same red for danger. Alucard Yellow is darkened to `#7c6714` for AA on chrome. Both terminals use Purple cursors and Selection `#44475a` / `#cfcfde`. Tints use these colors at 0.1–0.16 alpha; scrims use BGDarker at 0.6 in dark and Foreground at 0.35 in light. Light shadows use Foreground; corners and card shadows follow amber.
+
 ### Terminal theme
 
 xterm.js reads a JavaScript theme, so `src/lib/settings.ts` `terminalTheme()` mirrors these four
@@ -122,7 +124,7 @@ Code in the chat and in the file viewer is colored by `--syntax-*` tokens. Four 
 palette: `--syntax-comment` is `--text-dim`, `--syntax-function` is `--accent`,
 `--syntax-inserted` is `--status-done` and `--syntax-deleted` is `--status-blocked`. The other six are literals per block
 (each at least 4.5:1 on `--bg-panel` and `--bg-elevated`). Catppuccin follows Catppuccin's own mapping: keywords are mauve, so `--syntax-function` is
-blue there instead of `--accent`, and Latte's colors are darkened to stay readable.
+blue there instead of `--accent`, and Latte's colors are darkened to stay readable. Dracula follows the VS Code classic mapping: keywords Pink, functions Green, strings Yellow, numbers Purple, types Cyan, variables Foreground and meta Orange.
 
 | Block | keyword | string | number | type | variable | meta |
 |-------|---------|--------|--------|------|----------|------|
@@ -132,8 +134,10 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 | Dark charcoal | `#d7a08a` | `#a7b789` | `#c2a2af` | `#9fb4c2` | `#dcd8d0` | `#b8a5c9` |
 | Catppuccin Mocha | `#cba6f7` | `#a6e3a1` | `#fab387` | `#f9e2af` | `#f5e0dc` | `#f5c2e7` |
 | Catppuccin Latte | `#712fc6` | `#2f7620` | `#b44201` | `#905c13` | `#4c4f69` | `#bc1d91` |
+| Dracula Classic | `#ff79c6` | `#f1fa8c` | `#bd93f9` | `#8be9fd` | `#f8f8f2` | `#ffb86c` |
+| Alucard Classic | `#a3144d` | `#7c6714` | `#644ac9` | `#036a96` | `#1f1f1f` | `#a34d14` |
 
-`--syntax-function` in Catppuccin: Mocha `#89b4fa`, Latte `#0b59f4`.
+`--syntax-function` in Catppuccin: Mocha `#89b4fa`, Latte `#0b59f4`; in Dracula: Classic `#50fa7b`, Alucard `#14710a`.
 
 ### File viewer
 
@@ -142,7 +146,7 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   color is not the only sign. It is a warning yellow, at least 4.5:1 on
   `--bg`, `--bg-panel` and `--bg-elevated`: amber `#e8c55c` / `#7a5a00`, light
   charcoal `#8a5300`, dark charcoal `#d9b26a`, Catppuccin Mocha `#f9e2af` (yellow), Latte
-  `#8a5710`.
+  `#8a5710`; Dracula Classic `#f1fa8c`, Alucard Classic `#7c6714`.
 - `--line-number` colors the line numbers beside code: tertiary text, quieter than the code. It is
   `--text-dim`, except in Catppuccin, whose `--text-dim` (subtext1) is nearly `--text`: Mocha
   overlay2 `#9399b2` (5.8:1), Latte `#64677d` (subtext0 darkened to 4.9:1 on `--bg`).
@@ -256,7 +260,7 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
 
 ### Settings
 - `theme`: `dark`, `light`, or `system`; default `dark`.
-- `palette`: `amber`, `charcoal` or `catppuccin`; default `amber`. A removed palette (`report`,
+- `palette`: `amber`, `charcoal`, `catppuccin` or `dracula`; default `amber`. A removed palette (`report`,
   `lilac`, `forest`) loads as `amber`.
 - `density`: `comfortable` or `compact`; default `comfortable`.
 - `contrast`: a whole step from `-2` to `+3`; default `0`, the palette as drawn (Contrast, above).

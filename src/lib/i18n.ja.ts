@@ -74,6 +74,7 @@ export const JA: Record<string, string> = {
   "Charcoal": "チャコール",
   "Amber": "アンバー",
   "Catppuccin": "Catppuccin",
+  "Dracula": "Dracula",
   "Pin agent": "エージェントを固定",
   "Unpin agent": "エージェントの固定を解除",
   "Message from another session: {name}": "別のセッションからのメッセージ: {name}",

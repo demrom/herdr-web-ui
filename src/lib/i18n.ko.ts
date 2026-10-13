@@ -72,6 +72,7 @@ export const KO: Record<string, string> = {
   "Charcoal": "차콜",
   "Amber": "앰버",
   "Catppuccin": "Catppuccin",
+  "Dracula": "Dracula",
   "Pin agent": "에이전트 고정",
   "Unpin agent": "에이전트 고정 해제",
   "Message from another session: {name}": "다른 세션에서 온 메시지: {name}",
