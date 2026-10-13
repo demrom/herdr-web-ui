@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
@@ -157,6 +157,7 @@ try {
       for (const key of Object.keys(value)) fix(value[key]);
       return value;
     };
+    window.fitHoldSend = false;
     const clone = structuredClone;
     window.structuredClone = (value, options) => fix(clone(value, options));
     const later = window.setTimeout.bind(window);
@@ -166,7 +167,17 @@ try {
     const json = Response.prototype.json;
     Response.prototype.json = async function () { return fix(await json.call(this)); };
   })();</script>`;
-  writeFileSync(index, html.replace(/<script type="module"/, () => `${patch}\n    <script src="./demo-transport.js"></script>\n    <script>(() => { const Socket = window.WebSocket; const Wrapped = function(...args) { const socket = new Socket(...args); window.fitSocket = socket; return socket; }; Object.assign(Wrapped, { CONNECTING: Socket.CONNECTING, OPEN: Socket.OPEN, CLOSING: Socket.CLOSING, CLOSED: Socket.CLOSED }); window.WebSocket = Wrapped; const demoFetch = window.fetch; window.fetch = (input, init) => String(typeof input === "string" ? input : input.url ?? input).includes("/pane/image") ? new Promise(() => {}) : demoFetch(input, init); })();</script>\n    <script type="module"`));
+  writeFileSync(index, html.replace(/<script type="module"/, () => `${patch}\n    <script src="./demo-transport.js"></script>\n    <script>(() => { const Socket = window.WebSocket; const Wrapped = function(...args) { const socket = new Socket(...args); window.fitSocket = socket;
+      const send = socket.send.bind(socket);
+      socket.send = (raw) => {
+        const frame = JSON.parse(raw);
+        if (!window.fitHoldSend || frame.type !== "submit") return send(raw);
+        window.fitReply = (ok) => socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
+          type: "submit-result", id: frame.id, pane_id: frame.pane_id, ok,
+          ...(ok ? {} : { code: "agent_not_ready", message: "The demo agent cannot take this submission." }),
+        }) }));
+      };
+      return socket; }; Object.assign(Wrapped, { CONNECTING: Socket.CONNECTING, OPEN: Socket.OPEN, CLOSING: Socket.CLOSING, CLOSED: Socket.CLOSED }); window.WebSocket = Wrapped; const demoFetch = window.fetch; window.fetch = (input, init) => String(typeof input === "string" ? input : input.url ?? input).includes("/pane/image") ? new Promise(() => {}) : demoFetch(input, init); })();</script>\n    <script type="module"`));
 
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
@@ -210,6 +221,71 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      // Only the transport receipt is held: the real composer and draft lifecycle stay intact.
+      for (const agent of ["claude", "codex"] as const) for (const width of [390, 1440]) for (const theme of ["dark", "light"] as const) await withCard(browser, width, { agent, model: agent === "claude" ? "claude-opus-5-5" : "gpt-5.6", status: "idle" }, async (page) => {
+        await page.evaluate((theme) => {
+          document.documentElement.dataset.theme = theme;
+          (window as any).fitHoldSend = true;
+        }, theme);
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const button = page.locator(".composer-send");
+        const geometry = () => button.evaluate((node) => { const { x, y, width, height } = node.getBoundingClientRect(); return { x, y, width, height }; });
+        const empty = await geometry();
+        assert.equal(await button.getAttribute("aria-busy"), null, "empty is not busy");
+        await box.fill("Check the delivery feedback.");
+        const before = await geometry();
+        await button.click();
+        await page.waitForFunction(() => typeof (window as any).fitReply === "function");
+        assert.equal(await button.getAttribute("aria-busy"), "true", "a held receipt shows in-flight progress");
+        assert.equal(await button.getAttribute("aria-label"), "Sending…");
+        assert.equal(await button.isDisabled(), true);
+        assert.equal(await box.inputValue(), "Check the delivery feedback.", "text stays until acknowledged");
+        assert.deepEqual(await geometry(), before, "sending does not move or resize the button");
+        assert.equal(before.width, empty.width);
+        assert.equal(before.height, empty.height);
+        assert.equal(await button.locator("[aria-live], [role=status]").count(), 0, "no repeated live announcement");
+        const progress = button.locator(".composer-send-progress");
+        for (const palette of ["amber", "report", "charcoal", "catppuccin", "lilac", "forest"]) {
+          await page.evaluate((palette) => { document.documentElement.dataset.palette = palette; }, palette);
+          assert.equal(await progress.evaluate((node) => getComputedStyle(node).animationTimingFunction), "steps(8)");
+          assert.equal(await button.evaluate((node) => getComputedStyle(node).opacity), "1");
+          assert.deepEqual(await geometry(), before, `${palette} does not change the button geometry`);
+          const colors = await button.evaluate((node) => ({ ink: getComputedStyle(node).color, fill: getComputedStyle(node, "::before").backgroundColor }));
+          assert.notEqual(colors.ink, colors.fill, `${palette} progress contrasts with its accent circle`);
+        }
+        await page.evaluate(() => { document.documentElement.dataset.palette = "amber"; });
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        assert.equal(await progress.evaluate((node) => getComputedStyle(node).animationName), "none", "reduced motion retains a static ring");
+        assert.equal(await progress.isVisible(), true);
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        if (process.env.UI_EVIDENCE_DIR) {
+          mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `send-${agent}-${width}-${theme}.png`) });
+        }
+        await page.evaluate(() => (window as any).fitReply(true));
+        await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")!.value === "");
+        assert.equal(await button.getAttribute("aria-busy"), null);
+        assert.equal(await button.getAttribute("aria-label"), "Send message");
+        assert.deepEqual(await geometry(), before);
+        await box.fill("Keep this draft after refusal.");
+        await button.click();
+        await page.waitForFunction(() => document.querySelector(".composer-send")?.getAttribute("aria-busy") === "true");
+        await page.evaluate(() => (window as any).fitReply(false));
+        await page.waitForFunction(() => !document.querySelector(".composer-send")?.hasAttribute("aria-busy"));
+        assert.equal(await box.inputValue(), "Keep this draft after refusal.");
+        assert.equal(await button.isEnabled(), true, "refusal returns to the existing retry path");
+        await page.locator(".composer-note").waitFor();
+      });
+      console.log("PASS held Send receipts show progress without moving the button, retain drafts, settle and recover on Claude/Codex desktop/phone in both themes");
+      await withCard(browser, 390, { agent: "claude", model: "claude-opus-5-5", status: "working" }, async (page) => {
+        await page.evaluate(() => { (window as any).fitHoldSend = true; });
+        await draft(page);
+        await page.locator(".composer-send").click();
+        await page.getByRole("textbox", { name: "Message", exact: true }).fill("");
+        assert.equal(await page.locator('.composer-send[aria-busy="true"]').count(), 1, "editing a working send to empty does not replace progress with Stop");
+        await page.evaluate(() => (window as any).fitReply(true));
+        await page.locator(".composer-stop").waitFor();
+      });
       // One primary control across agents: Stop with an empty working draft, Send with text.
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);
