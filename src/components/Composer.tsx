@@ -1244,6 +1244,8 @@ export function Composer({
               aria-label={t("Stop agent")}
               title={t("Stop agent")}
               disabled={!connected}
+              // Keep the soft keyboard up so the control cannot move before the touch click.
+              onPointerDown={(event) => { if (event.pointerType === "touch") event.preventDefault(); }}
               onClick={onAbort}
             >
               <Square aria-hidden="true" />
@@ -1255,6 +1257,8 @@ export function Composer({
               aria-label={t("Send message")}
               title={t("Send message")}
               disabled={!connected || uploading || sending || text.trim().length === 0}
+              // Mouse and hardware-keyboard activation keep their native focus behavior.
+              onPointerDown={(event) => { if (event.pointerType === "touch") event.preventDefault(); }}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />

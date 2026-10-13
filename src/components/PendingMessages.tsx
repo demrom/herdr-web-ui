@@ -56,6 +56,7 @@ export function PendingMessages({ messages, active = true, connected, blocked, u
           <span className="pending-message-note" role="status">{status}</span>
           {!uncertain && <button type="button" className="icon-button pending-message-action pending-message-send"
             aria-label={`${t("Send now")}: ${message.text}`} aria-busy={busy || undefined} title={t("Send now")}
+            onPointerDown={(event) => { if (event.pointerType === "touch") event.preventDefault(); }}
             disabled={!connected || blocked || busy} onClick={(event) => {
               const target = event.currentTarget, keyboard = event.detail === 0, stack = target.closest(".terminal-stack"), owner = stack?.getAttribute("data-pane-owner") ?? null;
               void onSendNow(message.id).finally(() => restoreFocus(keyboard, target, stack, owner));
