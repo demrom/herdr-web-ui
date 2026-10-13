@@ -153,6 +153,12 @@ try {
       }
       if ("prompt" in value && window.fitCase.suggestion !== undefined) value.suggestion = window.fitCase.suggestion;
       if (Array.isArray(value.features) && !window.fitCase.pending) value.features = value.features.filter((feature) => feature !== "pending-input");
+      if (Array.isArray(value.commands) && !value.commands.some((command) => command.name === "delegate")) value.commands.push(
+        { name: "delegate", description: "Delegate a task", source: "skill", ...(window.fitCase.agent === "codex" ? { trigger: "$" } : {}) },
+        { name: "template-creator", description: "Create a reusable template", source: "skill", ...(window.fitCase.agent === "codex" ? { trigger: "$" } : {}) },
+        { name: "deploy", description: "Deploy a project", source: "project" },
+        { name: "plugin:deploy", description: "Deploy through a plugin", source: "plugin" }
+      );
       if (window.fitCase.weeklyOnly && value.id === "codex" && Array.isArray(value.windows)) value.windows = value.windows.filter((limit) => limit.kind !== "session");
       if (Array.isArray(value.turns) && value.metadata) value.metadata = { model: window.fitCase.model, reasoning_effort: window.fitCase.effort, ...(window.fitCase.ring ? { context: { used: window.fitCase.contextUsed ?? 151000, window: 272000 } } : {}) };
       if (Array.isArray(value.turns) && window.fitCase.stream) {
@@ -453,6 +459,70 @@ try {
       });
       console.log("PASS prompt updates preserve a focused, internally scrolled draft and its mid-text caret at 390 and 1440px");
 
+      for (const agent of ["claude", "codex", "pi"] as const) for (const width of [320, 1280]) await withCard(browser, width, { agent, model: "gpt-5.6", status: "idle" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const menu = page.getByRole("listbox", { name: "Slash commands", exact: true });
+        await box.fill("/");
+        await menu.getByRole("option").filter({ hasText: "/clear" }).waitFor();
+        for (const text of ["a/b", "http://", "see https://example.test/path", "run tests then /clear"]) {
+          await box.fill(text);
+          await menu.waitFor({ state: "hidden" });
+        }
+        for (const text of ["run tests then /", "run tests\n/", "run tests\t/"]) {
+          await box.fill(text);
+          if (agent === "pi") { await menu.waitFor({ state: "hidden" }); continue; }
+          await menu.getByRole("option").first().waitFor();
+          const prefix = agent === "codex" ? "$" : "/";
+          assert.deepEqual(await menu.locator(".menu-item-main").allTextContents(), [prefix + "delegate", prefix + "template-creator"]);
+        }
+        if (agent !== "pi") {
+          await box.fill("run tests then /del afterwards");
+          for (let i = 0; i < 11; i++) await box.press("ArrowLeft");
+          assert.equal(await box.evaluate((node: HTMLTextAreaElement) => node.selectionStart), 19);
+          await menu.getByRole("option").first().waitFor();
+          assert.equal(await menu.evaluate((node) => {
+            const box = node.getBoundingClientRect();
+            return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight;
+          }), true, "the picker fits the viewport");
+          if (process.env.UI_EVIDENCE_DIR) {
+            mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+            await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `slash-${agent}-${width}.png`), fullPage: true });
+          }
+          // A committing IME Enter belongs to the input method, even while a skill is offered.
+          await box.evaluate((node) => node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true })));
+          assert.equal(await box.inputValue(), "run tests then /del afterwards");
+          await box.press("Tab");
+          const expected = `run tests then ${agent === "codex" ? "$" : "/"}delegate afterwards`;
+          assert.equal(await box.inputValue(), expected);
+          assert.equal(await box.evaluate((node: HTMLTextAreaElement) => node.selectionStart), 25);
+          await page.keyboard.type("next");
+          assert.equal(await box.inputValue(), expected.slice(0, 25) + "next" + expected.slice(25));
+          await box.fill("run tests then /del");
+          await menu.getByRole("option").first().waitFor();
+          await menu.getByRole("option").first().click();
+          assert.equal(await box.inputValue(), `run tests then ${agent === "codex" ? "$" : "/"}delegate `);
+          if (agent === "codex") {
+            await box.fill("use $del");
+            await menu.getByRole("option").first().waitFor();
+            await box.press("Enter");
+            assert.equal(await box.inputValue(), "use $delegate ");
+            await box.fill("look at $tmp");
+            await menu.waitFor({ state: "hidden" });
+          }
+          const prefix = agent === "codex" ? "$" : "/";
+          for (const text of [prefix + "tmp", "look\n" + prefix + "tmp", "use " + prefix + "creator"]) {
+            await box.fill(text);
+            await menu.getByRole("option").filter({ hasText: prefix + "template-creator" }).waitFor();
+          }
+        }
+        await box.fill("see @src");
+        await page.getByRole("listbox", { name: "Files", exact: true }).waitFor();
+        await box.fill("look at /tmp");
+        await box.press("Enter");
+        await page.getByText("look at /tmp", { exact: true }).waitFor();
+        assert.equal(await box.inputValue(), "", "Enter sends a path verbatim instead of accepting a fuzzy skill");
+        console.log(`PASS skill completion at word boundaries (${agent}, ${width}px)`);
+      });
       // One primary control across agents: Stop with an empty working draft, Send with text.
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);

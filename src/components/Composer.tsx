@@ -608,9 +608,15 @@ export function Composer({
 
   const filteredCommands = useMemo(
     () => (trigger?.kind === "slash"
-      ? rankSlashCommands(commands.filter((command) => (command.trigger ?? "/") === (trigger.prefix ?? "/")), trigger.query, slashUsage)
+      ? rankSlashCommands(commands.filter((command) => {
+        const prefix = command.trigger ?? "/";
+        if (trigger.start === 0) return prefix === (trigger.prefix ?? "/");
+        // Claude honours a skill mention as permission to invoke it; Codex names skills with `$`.
+        // pi expands /skill:name only at message start, and builtins are whole-message commands.
+        return command.source === "skill" && (agent === "claude" ? prefix === "/" : agent === "codex" && prefix === "$");
+      }), trigger.query, slashUsage, trigger.start > 0 && text[trigger.start - 1] !== "\n")
       : []),
-    [commands, slashUsage, trigger],
+    [agent, commands, slashUsage, text, trigger],
   );
   // a typed query lists the matches in rank order, whatever their source (a plugin command whose
   // word starts with it must not sit under a built-in that only has its letters scattered);
@@ -752,7 +758,7 @@ export function Composer({
 
   const selectCompletion = useCallback(
     (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
-      const replacement = currentTrigger.kind === "slash" ? `${currentTrigger.prefix ?? "/"}${(choice as SlashCommand).name} ` : `@${choice as string} `;
+      const replacement = currentTrigger.kind === "slash" ? `${(choice as SlashCommand).trigger ?? "/"}${(choice as SlashCommand).name} ` : `@${choice as string} `;
       const completed = applyCompletion(text, currentTrigger, replacement);
       setTextAndCaret(completed.text, completed.caret);
       setMenuDismissed(true);
