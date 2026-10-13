@@ -540,6 +540,7 @@ describe("palette", () => {
     expect(sanitizeSettings({ theme: "light" }).palette).toBe("amber");
     expect(sanitizeSettings({ palette: "charcoal" }).palette).toBe("charcoal");
     expect(sanitizeSettings({ palette: "catppuccin" }).palette).toBe("catppuccin");
+    expect(sanitizeSettings({ palette: "dracula" }).palette).toBe("dracula");
     expect(sanitizeSettings({ palette: "pink" }).palette).toBe("amber");
   });
 
@@ -552,6 +553,13 @@ describe("palette", () => {
     const reloaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
     expect(reloaded.palette).toBe("catppuccin");
     expect(sanitizeSettings({ ...reloaded, theme: "light" }).palette).toBe("catppuccin");
+  });
+
+  it("preserves Dracula through a saved settings round-trip and a theme change", () => {
+    const saved = sanitizeSettings({ palette: "dracula", theme: "dark" });
+    const reloaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
+    expect(reloaded.palette).toBe("dracula");
+    expect(sanitizeSettings({ ...reloaded, theme: "light" }).palette).toBe("dracula");
   });
 
   const css = readFileSync(join(import.meta.dir, "..", "styles.css"), "utf8");
@@ -568,6 +576,8 @@ describe("palette", () => {
     { theme: "light", palette: "charcoal", layers: ['[data-theme="light"][data-palette="charcoal"]', '[data-theme="light"]', ":root"] },
     { theme: "dark", palette: "catppuccin", layers: ['[data-theme="dark"][data-palette="catppuccin"]', ":root"] },
     { theme: "light", palette: "catppuccin", layers: ['[data-theme="light"][data-palette="catppuccin"]', '[data-theme="light"]', ":root"] },
+    { theme: "dark", palette: "dracula", layers: ['[data-theme="dark"][data-palette="dracula"]', ":root"] },
+    { theme: "light", palette: "dracula", layers: ['[data-theme="light"][data-palette="dracula"]', '[data-theme="light"]', ":root"] },
   ] as const;
   const tokens = (layers: readonly string[]) => (name: string): string =>
     layers.map((selector) => block(selector).match(new RegExp(`--${name}: ([^;]+);`))?.[1]).find((value) => value !== undefined)!;
@@ -579,7 +589,7 @@ describe("palette", () => {
     }
   });
 
-  it("keeps text and agent states readable (WCAG AA 4.5:1) on every surface of every palette", () => {
+  it.each([...cases])("keeps $theme/$palette text and agent states readable (WCAG AA 4.5:1) on every surface", ({ theme, palette, layers }) => {
     type Rgb = [number, number, number];
     const rgba = (value: string): [Rgb, number] => {
       const hex = value.match(/^#([0-9a-f]{6})$/);
@@ -600,18 +610,26 @@ describe("palette", () => {
       return (hi + 0.05) / (lo + 0.05);
     };
     const failures: string[] = [];
-    for (const { theme, palette, layers } of cases) {
-      const read = tokens(layers);
-      const color = (name: string): Rgb => rgba(read(name))[0];
-      for (const surface of ["bg", "bg-panel", "bg-elevated", "bg-hover"]) {
-        for (const text of ["text", "text-dim"]) {
-          if (ratio(color(text), color(surface)) < 4.5) failures.push(`${theme}/${palette} ${text} on ${surface}`);
+    const read = tokens(layers);
+    const color = (name: string): Rgb => rgba(read(name))[0];
+    for (const surface of ["bg", "bg-panel", "bg-elevated", "bg-hover"]) {
+      for (const text of ["text", "text-dim"]) {
+        if (ratio(color(text), color(surface)) < 4.5) failures.push(`${theme}/${palette} ${text} on ${surface}`);
+      }
+      // a status badge: its color on its tint, over a (hovered or selected) row
+      for (const state of ["working", "blocked", "done"]) {
+        const backdrop = over(read(`status-${state}-tint`), color(surface));
+        if (ratio(color(`status-${state}`), backdrop) < 4.5) failures.push(`${theme}/${palette} ${state} badge on ${surface}`);
+      }
+    }
+    if (palette === "dracula") {
+      for (const surface of ["bg-panel", "bg-elevated"]) {
+        for (const syntax of ["keyword", "function", "string", "number", "type", "variable", "meta"]) {
+          if (ratio(color(`syntax-${syntax}`), color(surface)) < 4.5) failures.push(`${theme}/${palette} syntax-${syntax} on ${surface}`);
         }
-        // a status badge: its color on its tint, over a (hovered or selected) row
-        for (const state of ["working", "blocked", "done"]) {
-          const backdrop = over(read(`status-${state}-tint`), color(surface));
-          if (ratio(color(`status-${state}`), backdrop) < 4.5) failures.push(`${theme}/${palette} ${state} badge on ${surface}`);
-        }
+      }
+      for (const surface of ["bg", "bg-panel", "bg-elevated"]) {
+        if (ratio(color("notice"), color(surface)) < 4.5) failures.push(`${theme}/${palette} notice on ${surface}`);
       }
     }
     expect(failures).toEqual([]);

@@ -62,6 +62,7 @@ export const ZH: Record<string, string> = {
   "Charcoal": "炭灰",
   "Amber": "琥珀",
   "Catppuccin": "Catppuccin",
+  "Dracula": "Dracula",
   "Pin agent": "固定 Agent",
   "Unpin agent": "取消固定 Agent",
   "Pin workspace": "固定工作区",

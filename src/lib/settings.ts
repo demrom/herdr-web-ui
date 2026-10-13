@@ -30,9 +30,9 @@ export type UsageCount = "used" | "left";
 /** the limit a plan meter shows: the plan's week, or its short session (5 hours on Claude and Codex) */
 export type UsageGlance = "week" | "session";
 /** amber: the herdr look (the default); charcoal: neutral Ghostty-style dark;
- *  catppuccin: Catppuccin Mocha in dark, Latte in light. A record naming a palette that was removed
- *  (report, lilac, forest) loads as amber. */
-export type Palette = "amber" | "charcoal" | "catppuccin";
+ *  catppuccin: Catppuccin Mocha in dark, Latte in light; dracula: Dracula Classic in dark, Alucard Classic in light.
+ *  A record naming a palette that was removed (report, lilac, forest) loads as amber. */
+export type Palette = "amber" | "charcoal" | "catppuccin" | "dracula";
 /** the chat lane's widest: the transcript, the composer column and the held list share it (--chat-w in src/styles.css).
  *  narrow: 820px; default: follows the pane, up to 60rem (chatLaneWidth); wide: 72rem; full: the pane, less the gutters */
 export type ChatWidth = "narrow" | "default" | "wide" | "full";
@@ -333,7 +333,7 @@ export function alertPrefs(settings: Settings): AlertPrefs {
   return { input: settings.alertInput, done: settings.alertDone };
 }
 
-const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin"];
+const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin", "dracula"];
 
 const STORAGE_KEY = "herdr-web-ui:settings";
 export const TERMINAL_FONT_MIN = 10;
@@ -512,6 +512,10 @@ const TERMINAL_THEMES: Record<Palette, Record<ResolvedTheme, TerminalColors>> = 
     light: { background: "#eff1f5", foreground: "#4c4f69", cursor: "#dc8a78", selectionBackground: "#d2d4dc" },
     dark: { background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc", selectionBackground: "#3b3d4f" },
   },
+  dracula: {
+    light: { background: "#fffbeb", foreground: "#1f1f1f", cursor: "#644ac9", selectionBackground: "#cfcfde" },
+    dark: { background: "#282a36", foreground: "#f8f8f2", cursor: "#bd93f9", selectionBackground: "#44475a" },
+  },
 };
 
 export function terminalTheme(theme: ResolvedTheme, palette: Palette = "amber"): TerminalColors {
@@ -523,6 +527,7 @@ const THEME_COLOR: Record<Palette, Record<ResolvedTheme, string>> = {
   amber: { dark: "#181613", light: "#faf8f3" },
   charcoal: { dark: "#171717", light: "#fafaf9" },
   catppuccin: { dark: "#181825", light: "#e6e9ef" },
+  dracula: { dark: "#21222c", light: "#efeddc" },
 };
 
 function applyToDocument(settings: Settings, resolved: ResolvedTheme, palette: Palette, language: Language): void {
