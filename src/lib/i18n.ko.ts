@@ -86,6 +86,8 @@ export const KO: Record<string, string> = {
   "Comma-separated, tried in order. A font this device does not have falls back to the default.": "쉼표로 구분하며 앞에서부터 차례로 사용합니다. 이 기기에 없는 글꼴은 기본 글꼴로 대체합니다.",
   "Composer": "입력창",
   "Enter sends": "Enter로 보내기",
+  "Return inserts a new line": "Return으로 줄바꿈",
+  "When on, use Send or hardware Mod+Enter to send.": "켜면 전송 버튼이나 하드웨어 키보드의 Mod+Enter로 전송합니다.",
   "When off, Mod+Enter sends": "끄면 Mod+Enter로 보냅니다",
   "Only the first {count} of {total} files were taken.": "파일 {total}개 중 앞의 {count}개만 가져왔습니다.",
   "Chat": "채팅",

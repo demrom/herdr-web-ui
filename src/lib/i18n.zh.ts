@@ -90,6 +90,8 @@ export const ZH: Record<string, string> = {
   "Comma-separated, tried in order. A font this device does not have falls back to the default.": "以逗号分隔，按顺序使用。此设备上没有的字体会回退到默认字体。",
   "Composer": "输入框",
   "Enter sends": "按 Enter 发送",
+  "Return inserts a new line": "按 Return 换行",
+  "When on, use Send or hardware Mod+Enter to send.": "开启后，点击发送按钮或使用实体键盘按 Mod+Enter 发送。",
   "When off, Mod+Enter sends": "关闭后按 Mod+Enter 发送",
   "Only the first {count} of {total} files were taken.": "{total} 个文件中只取了前 {count} 个。",
   "Chat": "聊天",

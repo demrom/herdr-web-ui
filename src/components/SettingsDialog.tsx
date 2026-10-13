@@ -37,6 +37,7 @@ import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
@@ -304,6 +305,7 @@ function AppearancePage() {
 function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
+  const touch = useMediaQuery("(pointer: coarse)");
   return (
     <>
       <SettingsGroup>
@@ -330,8 +332,8 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("Composer")} section="composer">
-        <SettingsRow label={t("Enter sends")} description={t("When off, Mod+Enter sends")}>
-          <Toggle label={t("Enter sends")} checked={settings.enterSends} onChange={(enterSends) => update({ enterSends })} />
+        <SettingsRow label={touch ? t("Return inserts a new line") : t("Enter sends")} description={touch ? t("When on, use Send or hardware Mod+Enter to send.") : t("When off, Mod+Enter sends")}>
+          <Toggle label={touch ? t("Return inserts a new line") : t("Enter sends")} checked={touch ? !settings.enterSends : settings.enterSends} onChange={(checked) => update({ enterSends: touch ? !checked : checked })} />
         </SettingsRow>
         <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
           <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />

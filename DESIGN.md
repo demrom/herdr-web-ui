@@ -1266,10 +1266,7 @@ One set for both themes: the card is island black wherever it shows.
 - On a touch screen, picking a pane (drawer, palette, notification) or switching its lens never
   raises the keyboard: the user reads first, and a tap on the message box or the grid raises it.
   A desktop's picked pane takes typing at once.
-- Enter sends and Shift+Enter breaks by default; with **Enter sends** off, Mod+Enter sends. IME Enter
-  is ignored. Stop sends Escape. While the agent works and a draft shows Send in Stop's place,
-  Escape in the box is Stop; an open completion menu takes the first Escape. Working Send
-  schedules a pending message; its Send now action submits that same message now.
+- Enter sends and Shift+Enter breaks by default; with **Enter sends** off, Mod+Enter sends. On touch screens the same device setting is shown inverted as **Return inserts a new line**, with Send and hardware Mod+Enter explained below it. IME Enter is ignored. Stop sends Escape. While the agent works and a draft shows Send in Stop's place, Escape in the box is Stop; an open completion menu takes the first Escape. Working Send schedules a pending message; its Send now action submits that same message now.
 
 ### Voice input
 - A mic button sits beside the add button in the composer and beside Send in the terminal input line; it

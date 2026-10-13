@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
@@ -187,7 +187,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: touch, isMobile: touch, locale: "en-US" });
     try {
       await context.addInitScript((fitCase) => {
-        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false }));
+        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false }));
         Object.assign(window, { fitCase });
       }, { agent: "claude", pending: true, status: "working", effort: "xhigh", mic: false, ring: true, ...state });
       const page = await context.newPage();
@@ -210,6 +210,62 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      for (const width of [390, 1440]) await withCard(browser, width, { status: "idle", model: "gpt-5.6" }, async (page) => {
+        await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const settings = async () => {
+          await page.keyboard.press("ControlOrMeta+Shift+Comma");
+          await openSettingsPage(page, "Chat");
+        };
+        const close = () => page.getByRole("button", { name: "Close settings", exact: true }).click();
+        const sent = async (text: string) => {
+          await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "");
+          await page.waitForFunction(async ({ paneId, text }) => {
+            const conversation = await (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json();
+            return conversation.turns.some((turn: { role: string; parts: { kind: string; text?: string }[] }) => turn.role === "user" && turn.parts.some((part) => part.kind === "text" && part.text === text));
+          }, { paneId: panes.api, text }, { timeout: 5_000 });
+        };
+        await box.fill("Default Return sends");
+        await box.press("Enter");
+        await sent("Default Return sends");
+        await settings();
+        const label = width === 390 ? "Return inserts a new line" : "Enter sends";
+        const toggle = page.getByRole("switch", { name: label, exact: true });
+        assert.equal(await toggle.getAttribute("aria-checked"), width === 390 ? "false" : "true", "the default still sends Return");
+        await toggle.click();
+        await close();
+        await page.reload();
+        await box.waitFor();
+        await settings();
+        assert.equal(await toggle.getAttribute("aria-checked"), width === 390 ? "true" : "false", "the choice survives reload on this device");
+        if (width === 390 && process.env.UI_EVIDENCE_DIR) {
+          const evidence = process.env.UI_EVIDENCE_DIR;
+          mkdirSync(evidence, { recursive: true });
+          for (const theme of ["dark", "light"] as const) {
+            await openSettingsPage(page, "Appearance");
+            await page.getByRole("button", { name: theme === "dark" ? "Dark" : "Light", exact: true }).click();
+            await openSettingsPage(page, "Chat");
+            await toggle.scrollIntoViewIfNeeded();
+            await appFaces(page);
+            await page.screenshot({ path: join(evidence, `return-newline-phone-${theme}.png`) });
+          }
+        }
+        await close();
+        const pasted = "# Reply\n\n- first\n- second\n\n```ts\n  run();\n```";
+        await page.evaluate((text) => navigator.clipboard.writeText(text), pasted);
+        await box.focus();
+        await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
+        assert.equal(await box.inputValue(), pasted, "native paste keeps blank lines, Markdown and code indentation");
+        await box.press("Enter");
+        assert.equal(await box.inputValue(), pasted + "\n", "Return inserts a native newline without sending");
+        await page.getByRole("button", { name: "Send message", exact: true }).click();
+        await sent(pasted);
+        await box.fill("Hardware keyboard sends");
+        await box.press("ControlOrMeta+Enter");
+        await sent("Hardware keyboard sends");
+      });
+      console.log("PASS phone Return choice persists, desktop Mod+Enter stays, and native multiline paste reaches chat through Send");
+
       // One primary control across agents: Stop with an empty working draft, Send with text.
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);

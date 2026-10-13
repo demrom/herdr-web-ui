@@ -7,6 +7,12 @@ describe("composerMessage and submitNote", () => {
     expect(composerMessage("line one\r\nline two\n\n")).toBe("line one\nline two");
   });
 
+  it("keeps pasted Markdown, blank lines and code indentation in one submitted message", () => {
+    const message = "# Reply\n\n- first\n- second\n\n```ts\n  run();\n```";
+    expect(composerMessage(message.replaceAll("\n", "\r\n"))).toBe(message);
+    expect(composerPayload(message, true)).toBe("\u001b[200~" + message.replaceAll("\n", "\r") + "\u001b[201~");
+  });
+
   it("says why a message did not go, and never claims a lost one was sent", () => {
     expect(submitNote("agent_blocked", "x")).toBe("Not sent: the agent is waiting for an answer in the terminal. Answer it first.");
     expect(submitNote("read_only", "x")).toBe("Not sent: this view only watches the pane.");
