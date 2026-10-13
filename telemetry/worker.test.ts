@@ -62,6 +62,7 @@ const settings: TelemetrySettings = {
   usageHiddenCount: 64,
   pageOverlapRows: 1,
   chatPageKeys: false,
+  attachLimit: 20,
 };
 const now = new Date("2026-10-08T13:45:00Z");
 

@@ -36,6 +36,16 @@ it("keeps the screen wake lock off until this device explicitly enables it", () 
   expect(sanitizeSettings({ terminalWheelSpeed: "3" }).terminalWheelSpeed).toBe(1);
 });
 
+it("takes twenty files from one paste, pick or drop unless this device chose another whole number from 1 to 50", () => {
+  expect(sanitizeSettings({}).attachLimit).toBe(20);
+  expect(sanitizeSettings({ attachLimit: 4 }).attachLimit).toBe(4);
+  expect(sanitizeSettings({ attachLimit: 7.4 }).attachLimit).toBe(7);
+  expect(sanitizeSettings({ attachLimit: 500 }).attachLimit).toBe(50);
+  expect(sanitizeSettings({ attachLimit: 0 }).attachLimit).toBe(1);
+  expect(sanitizeSettings({ attachLimit: "8" }).attachLimit).toBe(20);
+  expect(SETTING_SCOPE.attachLimit).toBe("device");
+});
+
 it("keeps the terminal cursor at a block that blinks unless a saved shape or blink says otherwise", () => {
   expect(DEFAULT_SETTINGS.terminalCursorStyle).toBe("block");
   expect(DEFAULT_SETTINGS.terminalCursorBlink).toBe(true);

@@ -1131,7 +1131,8 @@ One set for both themes: the card is island black wherever it shows.
   still `Discard`.
 - `/` completions come from `GET /api/pane/commands` and group built-in, user and project commands;
   `@` completions query `GET /api/pane/files`. Arrow keys navigate, Enter/Tab accepts, Escape closes.
-- Paste, picker or drag/drop accepts up to four files per action; an image is stored as a paste, any other
+- Paste, picker or drag/drop attaches up to **Files at once** files per action (Settings → Chat, 20 unless the
+  device chose 1 to 50); the message box names how many it left out. An image is stored as a paste, any other
   file under its own sanitised name. Each uploads through `POST /api/pane/image`, three at a time
   across all picks, and puts a removable editable `@path` mention at the start of the message (after
   a leading `/command`), in the order the files were picked. A path waits while the box holds only a
@@ -1226,12 +1227,13 @@ One set for both themes: the card is island black wherever it shows.
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
 - Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
   (panes open in, show thinking, chat width, chat font size and family, highlight code; then
-  **Composer**: optional plain PageUp/PageDown chat scrolling (off by default), Enter sends, suggestion chip; then **Quick replies**; then **File viewer**: wrap long
+  **Composer**: optional plain PageUp/PageDown chat scrolling (off by default), Enter sends, files at once, suggestion chip; then **Quick replies**; then **File viewer**: wrap long
   lines, Markdown width), **Terminal** (font size, 80 columns in a split, font family, wheel
   speed, input mode, Key bar), **Alerts**, **Voice input**, **Subscription usage**,
   **Shortcuts** (the platform-resolved global bindings, then **Paging** with a 0–100 line overlap stepper; one line by default, zero for a full viewport), **Phone & devices** (the phone address,
-  Keep screen on, Install; then paired devices), **Remote PCs**, **About** (Updates, herdr,
-  the repository links). A button that points at Updates opens the dialog on About.
+  Keep screen on, Install; then Portal, where the server offers it; then paired devices),
+  **Remote PCs**, **About** (Updates, herdr, the repository links). A button that points at
+  Updates opens the dialog on About.
 - Every page is built from the same parts (`components/SettingsControls.tsx`). A group is an
   optional caption (`--fs-sm`, `--fw-semibold`, `--text-dim`, sentence case) over one card:
   `--bg-elevated`, hairline `--border`, `--radius-lg`, its rows parted by hairlines and never
@@ -1259,6 +1261,11 @@ One set for both themes: the card is island black wherever it shows.
   workspace-list toggle. Under the row, once the server has answered, the bridge auto-update switch.
 - Install (a row of the Phone group) reflects installed, promptable or browser-instructions state;
   About links the repository.
+- Portal, a group of its own between Phone and Devices where the server offers it: while it runs,
+  the address and QR code as the Phone group draws them over a Relay row with Stop; otherwise one
+  hint for what blocks it (no token, serve-only, no `portal` or an old one, with a link to get it)
+  or a wide Relay row whose text field and Start stack on a phone. Starting and stopping are one
+  dim status line; a failure is the server's sentence over Portal's own lines, folded.
 - The running versions are always written, since the sidebar carries none. Updates opens with
   **Running vX.Y.Z (commit)**: the server's version and commit, or the client's own build version
   before the server answers and where it names neither. While the server runs another version than

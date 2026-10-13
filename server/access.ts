@@ -57,7 +57,7 @@ export interface AccessInput {
   /** the operator declared `tailscale serve` as this install's only ingress (HERDR_WEB_TAILSCALE_SERVE_ONLY) */
   serveOnly: boolean;
   tokenConfigured: boolean;
-  /** a device has been paired at some point: the gate is closed to strangers (server/devices.ts) */
+  /** a device cookie was confirmed by DeviceStore.match: the gate is closed to strangers */
   gated: boolean;
 }
 

@@ -81,7 +81,6 @@ export interface ComposerProps {
   onUploadImage: (file: File) => Promise<string>;
 }
 
-const MAX_IMAGES_PER_ACTION = 4;
 const UPLOADS_AT_ONCE = 3;
 /**
  * Any file can be attached (an icon, a PDF, a log): the server stores it beside the pane
@@ -119,6 +118,8 @@ type Attachment = {
   state: "uploading" | "ready" | "error" | "no-room";
   /** for "no-room": how many characters the message must lose for the path to fit */
   missing?: number;
+  /** what the pick this file came in with left out, repeated beside an upload error of the batch */
+  leftOut: string | null;
 };
 
 function readSlashUsage(): Record<string, number> {
@@ -721,7 +722,8 @@ export function Composer({
             setAttachments((current) =>
               current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
             );
-            setNote(error instanceof Error ? error.message : String(error));
+            const failed = error instanceof Error ? error.message : String(error);
+            setNote(attachment.leftOut ? `${failed} ${attachment.leftOut}` : failed);
           },
         )
         .finally(() => {
@@ -733,22 +735,27 @@ export function Composer({
 
   const uploadImages = useCallback(
     (incoming: readonly File[]) => {
-      const images = incoming.slice(0, MAX_IMAGES_PER_ACTION);
+      const images = incoming.slice(0, settings.attachLimit);
       if (images.length === 0) return;
 
+      // the files left out of this pick: told now, and again beside an upload error of this batch
+      const leftOut = images.length < incoming.length
+        ? t("Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
+        : null;
       const added = images.map<Attachment>((file) => ({
         id: ++attachmentSequence,
         file,
         previewUrl: (PREVIEW_TYPES as readonly string[]).includes(file.type) ? URL.createObjectURL(file) : "",
         path: null,
         state: "uploading",
+        leftOut,
       }));
       setAttachments((current) => [...current, ...added]);
-      setNote(null);
+      setNote(leftOut);
       uploadQueue.current.push(...added);
       pumpUploads();
     },
-    [pumpUploads],
+    [pumpUploads, settings.attachLimit, t],
   );
 
   const removeAttachment = useCallback((attachment: Attachment) => {

@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ConversationMonitor } from "./conversation-monitor.ts";
 import { createServer } from "./index.ts";
+import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, LanExposure, PortalStatus, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
-import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, LanExposure, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
+import { PortalService } from "./portal.ts";
 import { noInstalledNotes, unmanagedUpdateStatus, type HerdrUpdateStatus, type InstalledNotes, type UpdateNotes } from "../shared/update.ts";
 import { USAGE_PROVIDERS, UsageService } from "./usage.ts";
 import { VoiceService } from "./voice.ts";
@@ -560,6 +561,89 @@ describe("phone access", () => {
     try {
       expect((await fetch(`http://localhost:${protectedServer.port}/api/access`)).status).toBe(401);
     } finally { protectedServer.stop(); rmSync(protectedState, { recursive: true, force: true }); }
+  });
+});
+
+describe("Portal API", () => {
+  it("does not serve requests until startup cleanup completes", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-portal-startup-gate-"));
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    class DeferredPortal extends PortalService {
+      override resume(): Promise<void> { return cleanup; }
+    }
+    const server = createServer({ port: 0, stateDir: state, token: "", portal: new DeferredPortal({ stateDir: state }) });
+    try {
+      let resolved = false;
+      const request = fetch(`http://127.0.0.1:${server.port}/api/health?scope=bridge`).then((response) => {
+        resolved = true;
+        return response;
+      });
+      const deadline = Date.now() + 50;
+      while (!resolved && Date.now() < deadline) await Bun.sleep(5);
+      expect(resolved).toBe(false);
+      releaseCleanup();
+      const response = await request;
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ ok: true, bridge_protocol: expect.any(Number) });
+    } finally {
+      releaseCleanup();
+      server.stop();
+      rmSync(state, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when startup cleanup rejects", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-portal-startup-failure-"));
+    class FailedPortal extends PortalService {
+      override resume(): Promise<void> { return Promise.reject(new Error("Portal cleanup failed")); }
+    }
+    const server = createServer({ port: 0, stateDir: state, token: "", portal: new FailedPortal({ stateDir: state }) });
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/health?scope=bridge`);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ error: { code: "internal_error" } });
+    } finally {
+      server.stop();
+      rmSync(state, { recursive: true, force: true });
+    }
+  });
+
+  it("opens a public address only behind the token, and closes it again", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-portal-api-"));
+    const standIn = join(state, "stand-in-portal");
+    writeFileSync(standIn, [
+      "#!/bin/sh",
+      'case "$1" in',
+      "  version) echo v2.6.1 ;;",
+      "  expose) trap 'exit 0' TERM; echo 'INF service ready at https://herdr-test-0123.relay.example:443'; while :; do sleep 0.05; done ;;",
+      "  *) exit 2 ;;",
+      "esac",
+      "",
+    ].join("\n"));
+    chmodSync(standIn, 0o755);
+    const relay = (async () => Response.json({ data: { release_version: "v2.6.1" } })) as unknown as typeof fetch;
+    const server = createServer({ port: 0, stateDir: state, token: "test-portal-token", portal: new PortalService({ stateDir: state, bin: standIn, fetch: relay }) });
+    const url = `http://127.0.0.1:${server.port}/api/portal`;
+    const signedIn = { authorization: "Bearer test-portal-token" };
+    const post = (action: string, headers: Record<string, string>) => fetch(`${url}/${action}`, { method: "POST", headers: { ...headers, "x-herdr-update": "1", "content-type": "application/json" }, body: JSON.stringify({ relay: "relay.example" }) });
+    const status = async (headers: Record<string, string> = signedIn) => await (await fetch(url, { headers })).json() as PortalStatus;
+    try {
+      expect((await fetch(url)).status).toBe(401);
+      expect(await status()).toMatchObject({ supported: true, usable: true, blocked: null, phase: "idle" });
+      expect((await post("start", {})).status).toBe(401);
+      expect((await post("start", signedIn)).status).toBe(202);
+      const deadline = Date.now() + 10_000;
+      let running = await status();
+      while (running.phase === "starting") {
+        if (Date.now() >= deadline) throw new Error("Timed out: Portal was ready");
+        await Bun.sleep(20);
+        running = await status();
+      }
+      expect(running).toMatchObject({ phase: "running", url: "https://herdr-test-0123.relay.example", relay: "https://relay.example" });
+      expect((await post("stop", signedIn)).status).toBe(202);
+      expect((await status()).url).toBeNull();
+    } finally { server.stop(); rmSync(state, { recursive: true, force: true }); }
   });
 });
 
@@ -2725,6 +2809,9 @@ describe("token auth", () => {
       const { code } = (await (await fetch(`http://127.0.0.1:${open.port}/api/devices/pair/start`, { method: "POST", headers: guard })).json()) as { code: string };
       const paired = await fetch(`http://127.0.0.1:${open.port}/api/devices/pair`, { method: "POST", headers: { ...guard, "x-forwarded-for": "100.64.0.9" }, body: JSON.stringify({ code, label: "Phone" }) });
       expect(paired.status).toBe(204);
+      expect((await health(open.port)).lan_exposure).toEqual({ host: "0.0.0.0" });
+      const cookie = paired.headers.get("set-cookie")!.split(";")[0]!;
+      expect((await health(open.port, { cookie })).auth).toMatchObject({ authenticated: true, via: "device" });
       expect((await health(open.port)).auth).toMatchObject({ authenticated: true, via: "local" });
       expect((await health(open.port)).lan_exposure).toBeUndefined();
     } finally {

@@ -49,7 +49,7 @@ it("posts the full safe telemetry snapshot and current notice version", async ()
   const body = JSON.parse(String(requestInit?.body)) as Record<string, unknown>;
   expect(body).toEqual(change);
   expect(body).not.toHaveProperty("changed_settings");
-  expect(Object.keys(body.settings as object)).toHaveLength(52);
+  expect(Object.keys(body.settings as object)).toHaveLength(53);
   expect(body.settings).not.toHaveProperty("terminalFontFamily");
   expect(body.settings).not.toHaveProperty("chatFontFamily");
   expect(body.settings).not.toHaveProperty("usageHidden");

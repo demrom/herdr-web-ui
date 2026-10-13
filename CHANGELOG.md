@@ -8,6 +8,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Settings → Phone & devices → Portal** gives this PC a public HTTPS address through
+  [Portal](https://github.com/gosuda/portal-tunnel), with no account and no domain of your own.
+  With Portal v2.6.1 or later installed, **Start** runs it on a relay you enter, dropping any
+  `Tailscale-User-Login` header a visitor sends; it starts only with `HERDR_WEB_TOKEN` set. The
+  address and its QR code show on every signed-in device, any device that can type into your
+  terminals can stop it, and an address left on comes back when the app restarts.
+  ([#746](https://github.com/devswha/herdr-web-ui/pull/746) by @rabbitson87)
 - **Two tabs side by side** on a desktop, from different workspaces or PCs: drag a tab down out
   of its strip, or a sidebar row over the pane area, and drop it on the left or right half. A guide
   shows the two halves as soon as the drag starts and keeps its side steady at the centre; Escape
@@ -70,6 +77,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
 
 ### Fixed
+- First-device pairing waits for the browser to return its device cookie before restricting
+  access. A proxy that drops the cookie no longer locks out an otherwise open installation;
+  Settings reports the failed pairing instead. Already restricted installations stay restricted.
+  ([#915](https://github.com/devswha/herdr-web-ui/pull/915))
 - A message another Claude Code session sends into a pane (its `peer` messages) shows in the chat as
   a folded **Message from another session: {name}** that opens its own turn, instead of being skipped so the work it
   started was appended to the answer before it.
@@ -80,6 +91,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - A file whose `@path` has no room in a message near 20,000 characters says so: its tile reads
   "No room" and the status line says how many characters to remove. Removing that file lets the
   files picked after it in. Within 200 characters of the limit the status line counts what is left.
+- One paste, pick or drop attaches up to 20 files instead of silently keeping the first four, and
+  the message box says how many it left out. **Settings → Chat → Files at once** sets the number
+  for the device, from 1 to 50.
 - Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 - **Send now** on a working Codex pane sends the message at once. Codex kept it until its next
@@ -87,6 +101,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   itself offers to interrupt the turn and send it. An ordinary Send and the automatic next-turn
   delivery never interrupt Codex.
   ([#783](https://github.com/devswha/herdr-web-ui/pull/783) by @kilhyeonjun)
+- On Windows, a pane that runs a launcher which starts OmO as its child is recognized as OmO. herdr
+  names only the launcher there, so the bridge now also looks for OmO below the pane's shell in the
+  PC's process table, so its chat and session are found. Only processes below that pane's own
+  shell count. ([#886](https://github.com/devswha/herdr-web-ui/pull/886) by @willowite)
 
 ## [0.4.8] - 2026-10-12
 

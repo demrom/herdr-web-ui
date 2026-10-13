@@ -113,6 +113,8 @@ export interface Settings {
   chatWidth: ChatWidth;
   /** true: Enter sends in the composer, Shift+Enter breaks the line; false: Ctrl/Cmd+Enter sends */
   enterSends: boolean;
+  /** how many files one paste, pick or drop attaches; the rest are left out with a note */
+  attachLimit: number;
   /** true: a message sent while the agent works goes by itself when the turn ends; false: it waits for Send now */
   autoSendQueued: boolean;
   /** show the agent's folded reasoning blocks in the chat view */
@@ -234,6 +236,7 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
     usageHiddenCount: settings.usageHidden.length,
     pageOverlapRows: settings.pageOverlapRows,
     chatPageKeys: settings.chatPageKeys,
+    attachLimit: settings.attachLimit,
   };
 }
 
@@ -250,7 +253,7 @@ export const SETTING_SCOPE = {
   terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", pageOverlapRows: "device", chatPageKeys: "device", density: "device",
   quietOpenedDone: "device", terminalFontSize: "device", terminalCursorStyle: "device", terminalCursorBlink: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
-  narrowPaneFont: "device", chatFontSize: "device", chatFontFamily: "device", chatWidth: "device", enterSends: "device",
+  narrowPaneFont: "device", chatFontSize: "device", chatFontFamily: "device", chatWidth: "device", enterSends: "device", attachLimit: "device",
   keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
   voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does; highlighting remains shared.
@@ -290,6 +293,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatFontFamily: "",
   chatWidth: "default",
   enterSends: true,
+  attachLimit: 20,
   autoSendQueued: true,
   showThinking: false,
   keepScreenOn: false,
@@ -358,6 +362,8 @@ export const TERMINAL_FONT_MIN = 10;
 export const TERMINAL_FONT_MAX = 22;
 export const TERMINAL_WHEEL_SPEED_MIN = 1;
 export const TERMINAL_WHEEL_SPEED_MAX = 10;
+export const ATTACH_LIMIT_MIN = 1;
+export const ATTACH_LIMIT_MAX = 50;
 
 export const CHAT_FONT_MIN = 11;
 export const CHAT_FONT_MAX = 24;
@@ -460,6 +466,9 @@ export function sanitizeSettings(raw: unknown): Settings {
     chatFontFamily: sanitizeFontFamily(record["chatFontFamily"]),
     chatWidth: CHAT_WIDTHS.includes(record["chatWidth"] as ChatWidth) ? record["chatWidth"] as ChatWidth : DEFAULT_SETTINGS.chatWidth,
     enterSends: typeof record["enterSends"] === "boolean" ? record["enterSends"] : DEFAULT_SETTINGS.enterSends,
+    attachLimit: typeof record["attachLimit"] === "number" && Number.isFinite(record["attachLimit"])
+      ? Math.min(ATTACH_LIMIT_MAX, Math.max(ATTACH_LIMIT_MIN, Math.round(record["attachLimit"])))
+      : DEFAULT_SETTINGS.attachLimit,
     autoSendQueued: typeof record["autoSendQueued"] === "boolean" ? record["autoSendQueued"] : DEFAULT_SETTINGS.autoSendQueued,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
     keepScreenOn: typeof record["keepScreenOn"] === "boolean" ? record["keepScreenOn"] : DEFAULT_SETTINGS.keepScreenOn,
