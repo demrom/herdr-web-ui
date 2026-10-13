@@ -1590,6 +1590,7 @@ export function App() {
                         paneId={item?.restore_error ? null : item?.pane_id ?? null}
                         restoreError={item?.restore_error ?? null}
                         agent={item?.agent ?? null}
+                        cacheIdentity={item?.agent_session?.value ? JSON.stringify([item.terminal_id, item.agent, item.agent_session.agent, item.agent_session.kind, item.agent_session.value]) : undefined}
                         agentStatus={item?.agent_status}
                         backgroundTasks={item?.background_tasks ?? 0}
                         // an offline PC's cached plan cannot be read

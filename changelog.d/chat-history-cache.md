@@ -1,0 +1,2 @@
+### Added
+- Optional chat history cache on this device, with immediate cached reopening for known agent sessions with background prefix validation, background loading of the whole parsed transcript for scrolling and search without merging rows during touch or momentum, incremental refresh, a configurable size limit, least recently opened chat eviction, storage usage and a clear button. It is off by default and pauses while disabled, retains older history during same-session refreshes and clears when authentication changes. Chats larger than the limit are not saved.

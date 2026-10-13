@@ -19,6 +19,7 @@ export interface ChatTimelineProps<Row extends ChatTimelineRow> {
   following: RefObject<boolean>;
   /** A turn works and motion is welcome: following the end glides. */
   smoothFollow: boolean;
+  reveal: boolean;
   memories: Map<string, ChatRowMemory>;
   outputChanged: () => void;
   header: ReactNode;
@@ -31,7 +32,7 @@ export interface ChatTimelineProps<Row extends ChatTimelineRow> {
 }
 
 /** One scroll owner; selected and focused rows stay real DOM nodes outside its window. */
-export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source, scroller, listRef, following, smoothFollow, memories, outputChanged, header, footer, label, matchKey, finding, onScroll, renderRow }: ChatTimelineProps<Row>) {
+export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source, scroller, listRef, following, smoothFollow, reveal, memories, outputChanged, header, footer, label, matchKey, finding, onScroll, renderRow }: ChatTimelineProps<Row>) {
   const [selectionKeys, setSelectionKeys] = useState<string[]>([]);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   useLayoutEffect(() => {
@@ -40,6 +41,12 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
   }, [scope]);
   const manualLayout = useRef(false);
   const rowKeys = useMemo(() => rows.map((row) => row.key), [rows]);
+  const previousKeys = useRef<readonly string[]>([]);
+  const revealed = useMemo(() => {
+    const previous = new Set(previousKeys.current);
+    return new Set(reveal && following.current && previous.size > 0 ? rowKeys.filter((key) => !previous.has(key)) : []);
+  }, [rowKeys, reveal, following]);
+  useLayoutEffect(() => { previousKeys.current = rowKeys; }, [rowKeys]);
   const positions = useMemo(() => new Map(rowKeys.map((key, index) => [key, index])), [rowKeys]);
   const pinned = useMemo(() => [...new Set(focusKey === null ? selectionKeys : [...selectionKeys, focusKey])], [selectionKeys, focusKey]);
   const extraData = useMemo(() => ({ renderRow, matchKey }), [renderRow, matchKey]);
@@ -140,9 +147,9 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
       memories.set(item.key, memory);
     }
     return <ChatRowMemoryContext.Provider value={memory}>
-      <div data-chat-row={item.key} data-chat-match={item.key === matchKey ? "" : undefined} className={item.beforeUser ? "chat-virtual-row is-before-user" : "chat-virtual-row"}>{renderRow(item, index)}</div>
+      <div data-chat-row={item.key} data-chat-match={item.key === matchKey ? "" : undefined} className={`chat-virtual-row${item.beforeUser ? " is-before-user" : ""}${revealed.has(item.key) ? " chat-row-reveal" : ""}`}>{renderRow(item, index)}</div>
     </ChatRowMemoryContext.Provider>;
-  }, [memories, outputChanged, renderRow, matchKey]);
+  }, [memories, outputChanged, renderRow, matchKey, revealed]);
 
   return <LegendList
     ref={attachList}

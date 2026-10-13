@@ -123,6 +123,8 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         source:"scrollback" when the pane has no recognized, readable store.
  *         Grok requires exact live process/session evidence, Agy live process/session evidence;
  *         rewinds invalidate cursors.
+ *         Opt-in incremental=1 accepts a delta cursor on the same page query and returns
+ *         drop_before/replace_from plus changed turns; a stale prefix returns replace_from:0.
  *         Grok/Agy optional activity describes the latest native turn, independently of pane status.)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
@@ -575,6 +577,14 @@ export interface PlanSummary {
 
 /** GET /api/pane/conversation: native conversation with settings, or scrollback fallback. */
 export interface ConversationResponse {
+  /** Opt-in incremental page cursor. Send as `delta` with `incremental=1` on the same page query. */
+  delta_cursor?: string;
+  /** Opaque agent/store/session identity, present on opt-in incremental reads. Confirm before restoring saved rows. */
+  cache_session?: string;
+  /** Drop this many cached turns before applying `replace_from` when the newest page slides. */
+  drop_before?: number;
+  /** With incremental reads, replace the cached page starting at this turn; zero reloads it. */
+  replace_from?: number;
   /** Grok/Agy latest native turn; display feedback only, never input-delivery authority. */
   activity?: "thinking" | "working" | "idle";
   /** Stable across appends; changes on transcript replacement or native context clear. */

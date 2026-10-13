@@ -493,6 +493,7 @@ export type RecognizedConversation = {
    */
   abandoned?: { count: number; branches: number; summary: string | null };
   history_id: string;
+  cache_session?: string;
   /** changes whenever the answer could: the route's ETag, so an unchanged poll costs no body */
   version: string;
 };
@@ -512,7 +513,7 @@ export function answerVersion(key: string, signature: string): string {
  * while it is still inside the newest page); with `before`, the page ending there,
  * never reaching back past `since`.
  */
-export type ConversationPage = { before?: string; since?: string; from?: string };
+export type ConversationPage = { before?: string; since?: string; from?: string; cache?: boolean };
 
 /**
  * A transcript as one byte stream: for a paginated Codex rollout the history it
@@ -1468,11 +1469,15 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (page.before !== undefined || page.since !== undefined || page.from !== undefined) throw new HistoryChanged();
     return await notBegun(launch.source, launch.historyId);
   }
+  const cacheSession = page.cache ? createHash("sha256").update(JSON.stringify([
+    resolved.source, resolved.path, "session" in resolved ? resolved.session : "sessionId" in resolved ? resolved.sessionId : null,
+  ])).digest("base64url") : undefined;
+  const identified = (answer: RecognizedConversation): RecognizedConversation => cacheSession === undefined ? answer : { ...answer, cache_session: cacheSession };
   if (resolved.source === "devin-transcript") {
     try {
       const answer = devinConversation(resolved.session, resolved.cwd, page, resolved.path);
       rememberPaneDevin(paneId, resolved.session, resolved.cwd, resolved.path);
-      return answer;
+      return identified(answer);
     } catch (error) {
       if (error instanceof DevinHistoryUnavailable) throw new ConversationUnavailable("transcript_missing");
       throw error;
@@ -1486,7 +1491,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (answer.kind === "unavailable") throw new ConversationUnavailable(answer.reason);
     const { kind: _kind, signature, ...conversation } = answer;
     const key = `opencode\0${resolved.path}\0${resolved.session}\0${page.before ?? ""}\0${page.since ?? ""}\0${page.from ?? ""}`;
-    return { source: resolved.source, ...conversation, version: answerVersion(key, signature) };
+    return identified({ source: resolved.source, ...conversation, version: answerVersion(key, signature) });
   }
   if (resolved.source === "hermes-transcript") {
     rememberPaneRead(paneId, resolved.path);
@@ -1494,7 +1499,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
       const answer = hermesConversationPage(resolved.sessionId, resolved.path, page);
       writtenSessions.add(`${resolved.source}\0${resolved.sessionId}`);
       rememberPaneSession(paneId, `${resolved.source}\0${resolved.sessionId}`);
-      return answer;
+      return identified(answer);
     } catch (error) {
       if (error instanceof ConversationNotStarted) return await onNotStarted(error);
       throw error;
@@ -1516,10 +1521,10 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   if (resolved.agy && !sameAgyStore(resolved.agy, await resolveAgyStore(snapshot.panes.find((pane) => pane.pane_id === paneId)!))) throw new ConversationUnavailable("no_session_path");
   if (identity !== null) { writtenSessions.add(`${resolved.source}\0${identity}`); rememberPaneSession(paneId, `${resolved.source}\0${identity}`); }
   if (resolved.source === "grok-transcript") {
-    try { return { ...answer, activity: grokProjection(resolved.path, statSync(resolved.path)).activity }; }
+    try { return identified({ ...answer, activity: grokProjection(resolved.path, statSync(resolved.path)).activity }); }
     catch { throw new ConversationUnavailable("transcript_missing"); }
   }
-  return answer;
+  return identified(answer);
 }
 
 /** One page of a resolved transcript (paneConversation's `page`). */
