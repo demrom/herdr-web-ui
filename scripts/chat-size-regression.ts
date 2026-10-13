@@ -611,10 +611,9 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
               await page.locator(`.pane-select[title^="${next} — "]`).evaluate((button: HTMLElement) => button.click());
               await waitWire("out", "attach", 2);
               await page.locator(`.terminal-stack[data-pane-owner="${next}"]`).waitFor({ state: "attached" });
-              await waitWire("out", "detach", 1);
               await page.clock.runFor(0);
-              assert.deepEqual(detachedPanes(await recorded()), [first],
-                "navigation detaches pane A while pane B starts its own release delay");
+              assert.deepEqual(detachedPanes(await recorded()), [],
+                "navigation keeps pane A attached while its queued message waits");
               await assertSharedConnection(page);
               await waitWire("in", "input-ready", 2);
               await page.clock.runFor(900);
@@ -625,11 +624,11 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
                 window.dispatchEvent(new Event("blur"));
               });
               await page.clock.runFor(100);
-              assert.deepEqual(detachedPanes(await recorded()), [first],
-                "pane A's orphaned timer cannot shorten pane B's new delay");
+              assert.deepEqual(detachedPanes(await recorded()), [],
+                "pane A's retained attach cannot shorten pane B's new delay");
               await page.clock.runFor(900);
-              await waitWire("out", "detach", 2);
-              assert.deepEqual(detachedPanes(await recorded()), [first, next], "pane B releases only after its full new delay");
+              await waitWire("out", "detach", 1);
+              assert.deepEqual(detachedPanes(await recorded()), [next], "pane B releases only after its full new delay; pane A stays for its queue");
               await assertSharedConnection(page);
             } else {
               assert.ok(releaseSubmit, "the explicit Send is waiting at the server boundary");
