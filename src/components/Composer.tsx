@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, Minimize2, Plus, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, Minimize2, Plus, Square, TriangleAlert, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -971,7 +971,7 @@ export function Composer({
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
-  const sendShown = composerSendShown({ working: isWorking, text });
+  const sendShown = sending || composerSendShown({ working: isWorking, text });
   const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1264,12 +1264,13 @@ export function Composer({
             <button
               type="button"
               className="composer-action composer-send"
-              aria-label={t("Send message")}
-              title={t("Send message")}
+              aria-label={sending ? t("Sending…") : t("Send message")}
+              title={sending ? t("Sending…") : t("Send message")}
+              aria-busy={sending || undefined}
               disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
               onClick={() => send()}
             >
-              <ArrowUp aria-hidden="true" />
+              {sending ? <LoaderCircle className="composer-send-progress" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
             </button>
           )}
         </div>

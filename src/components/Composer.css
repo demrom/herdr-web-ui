@@ -722,6 +722,18 @@
   cursor: default;
 }
 
+.composer-send[aria-busy="true"] {
+  opacity: 1;
+}
+
+.composer-send-progress {
+  animation: composer-send-spin var(--dur-spin) steps(8) infinite;
+}
+
+@keyframes composer-send-spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (hover: hover) {
   .composer-send:hover:not(:disabled) {
     --composer-action-fill: var(--primary-hover);
@@ -1042,6 +1054,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .composer-send-progress {
+    animation: none;
+  }
+
   .composer-surface,
   .composer-action::before,
   .composer-resize::before {
