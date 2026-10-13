@@ -28,7 +28,9 @@ current response ends. The same server ID is claimed by automatic delivery or a 
 explicit send-now action. The bridge checks its original connection, attachment, agent and
 visible prompt before input and Enter; each automatic next message also waits for evidence that
 the preceding turn started and finished, and an explicit send refused in between does not end that wait. It never sends native Tab and then resends that text.
-Pending acceptance is distinct from a committing-key receipt. Connection loss, pane separation
+Tab/workspace navigation on the same PC retains the original pane attachment while its automatic
+queue waits.
+Pending acceptance is distinct from a committing-key receipt. Connection loss, actual pane detachment
 and observe mode pause the pending list; reconnect or reload cannot rearm it. Losing a pane
 lease permanently cancels its in-flight send, even if that connection rejoins the same attachment
 or returns to interact before Enter. A queue request that arrives after the agent finishes uses

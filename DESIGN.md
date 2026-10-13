@@ -822,12 +822,14 @@ One set for both themes: the card is island black wherever it shows.
   release flushes the final ratio. A tab/topology change cancels the drag.
 - Every pane keeps its own xterm, attachment, input ownership, lens, chat state and file-path
   context. Only the active pane may take keyboard focus after an asynchronous operation.
-- Switching tabs retains an outgoing terminal only while its explicit submit awaits a receipt;
+- Switching tabs retains an outgoing terminal while its explicit submit awaits a receipt;
   its chat/input UI is unmounted and its grid is not resized. The receipt settles the original
   draft before the pane attachment is released. No input is replayed. A canvas that already released
   its panes while away opens a replacement as view-only until the user returns.
+  An automatic queue also retains its original pane lease until sent, discarded or held.
 - The unlocked app owns one connection per visited PC, shared by its pane mounts. A pane leaving
-  the canvas sends detach and loses its automatic-delivery lease, while the PC connection keeps
+  the canvas without an outstanding submit or automatic queue sends detach and loses its
+  automatic-delivery lease, while the PC connection keeps
   receiving authoritative held/removal receipts. Returning exposes the same pending ID for an
   explicit Send now. Only an actual disconnect, PC removal, sign-out or app teardown suspends
   connection proof; reconnect/reload never resumes pending delivery.
