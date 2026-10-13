@@ -243,6 +243,7 @@ function PaletteSelect({ id, value, onChange }: { id: string; value: PaletteName
       <option value="catppuccin">{t("Catppuccin")}</option>
       <option value="lilac">{t("Lilac")}</option>
       <option value="forest">{t("Forest")}</option>
+      <option value="dracula">{t("Dracula")}</option>
     </select>
   );
 }

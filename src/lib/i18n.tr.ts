@@ -73,6 +73,7 @@ export const TR: Record<string, string> = {
   "Charcoal": "Antrasit",
   "Amber": "Kehribar",
   "Catppuccin": "Catppuccin",
+  "Dracula": "Dracula",
   "Lilac": "Leylak",
   "Pin agent": "Ajanı sabitle",
   "Unpin agent": "Ajanın sabitlemesini kaldır",

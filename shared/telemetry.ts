@@ -37,7 +37,7 @@ export interface TelemetrySettings {
   agentPins: boolean;
   quietOpenedDone: boolean;
   agentMarks: "color" | "mono";
-  palette: "amber" | "report" | "charcoal" | "catppuccin" | "lilac" | "forest";
+  palette: "amber" | "report" | "charcoal" | "catppuccin" | "lilac" | "forest" | "dracula";
   terminalFontSize: number;
   terminalCursorStyle: "block" | "bar" | "underline";
   terminalCursorBlink: boolean;
@@ -112,7 +112,7 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   agentPins: booleanValue,
   quietOpenedDone: booleanValue,
   agentMarks: oneOf(["color", "mono"]),
-  palette: oneOf(["amber", "report", "charcoal", "catppuccin", "lilac", "forest"]),
+  palette: oneOf(["amber", "report", "charcoal", "catppuccin", "lilac", "forest", "dracula"]),
   terminalFontSize: integerBetween(10, 22),
   terminalCursorStyle: oneOf(["block", "bar", "underline"]),
   terminalCursorBlink: booleanValue,
