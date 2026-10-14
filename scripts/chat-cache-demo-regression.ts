@@ -42,6 +42,15 @@ async function until(check: () => boolean | Promise<boolean>, label: string) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
+/** Scrolls the transcript to its top until the oldest turn's text shows. */
+async function oldestTurn(page: Page, text: string) {
+  const log = page.getByRole("log").first();
+  await until(async () => {
+    await log.evaluate((node) => { node.scrollTop = 0; node.dispatchEvent(new Event("scroll")); });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    return await log.evaluate((node, wanted) => node.textContent!.includes(wanted), text);
+  }, `oldest turn shows ${text.trim()}`);
+}
 let server: ReturnType<typeof Bun.serve> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
@@ -83,7 +92,8 @@ try {
     }
   };`);
   const index = join(app, "index.html");
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script>window.cacheNativeFetch = window.fetch.bind(window);</script><script src="./demo-transport.js"></script><script src="./cache-transport.js"></script><script type="module"'));
+  // The demo's fixture transport calls crypto.randomUUID, which plain HTTP lacks; the app itself guards every call.
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script>if (!crypto.randomUUID) crypto.randomUUID = () => { const b = crypto.getRandomValues(new Uint8Array(16)); b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128; const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join(""); return [h.slice(0, 8), h.slice(8, 12), h.slice(12, 16), h.slice(16, 20), h.slice(20)].join("-"); }; window.cacheNativeFetch = window.fetch.bind(window);</script><script src="./demo-transport.js"></script><script src="./cache-transport.js"></script><script type="module"'));
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname.endsWith("/pane/conversation")) {
@@ -116,7 +126,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox", "--host-resolver-rules=MAP cache.test 127.0.0.1", "--no-proxy-server"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
   await context.addInitScript(() => {
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", theme: "dark" }));
+    if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", theme: "dark" }));
   });
   const page = await context.newPage();
   await page.goto(`http://cache.test:${server.port}/`);
@@ -162,7 +172,7 @@ try {
 
   const knownContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await knownContext.addInitScript(() => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
+    localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
     sessionStorage.setItem("fixture-session", "fictional-known-agent-session");
   });
   const knownPage = await knownContext.newPage();
@@ -184,6 +194,7 @@ try {
   const slowRequest = knownPage.waitForRequest((request) => request.url().includes("/pane/conversation?"));
   held = true;
   await slowRequest;
+  // fixed wait: proves no bottom loader appears once the slow refresh outlasts the 500 ms threshold
   await new Promise((resolve) => setTimeout(resolve, 600));
   assert.equal(await knownPage.locator(".chat-edge-loading.is-newer").count(), 0, "slow newest refresh shows no bottom loader");
   assert.equal(await knownPage.locator(".chat-edge-loading.is-older").isVisible(), false, "no older indicator during newest refresh");
@@ -211,7 +222,7 @@ try {
 
   {
     const edges = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-    await edges.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await edges.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     const original = bodies.get(first)!;
     const turns = Array.from({ length: 40 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Edge row ${index}. ` + "Fictional paragraph. ".repeat(15) }] }));
     bodies.set(first, { source: "claude-transcript", history_id: "fictional-visible-edge", cursor: "edge-older", turns });
@@ -274,7 +285,7 @@ try {
 
   {
     const wide = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: { "x-fixture-client": "many-turns" } });
-    await wide.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await wide.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     const original = bodies.get(first)!;
     bodies.set(first, { source: "claude-transcript", history_id: "fictional-many-turns", cursor: null,
       turns: Array.from({ length: 200 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Many-turn row ${index}. ` + "Fictional paragraph. ".repeat(50) }] })) });
@@ -298,7 +309,7 @@ try {
 
   {
     const fallback = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: { "x-fixture-client": "full-fallback" } });
-    await fallback.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await fallback.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     const original = bodies.get(first)!;
     const turn = (index: number) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Fallback turn ${index} ` + "x".repeat(2000) }] });
     bodies.set(first, { source: "claude-transcript", history_id: "fictional-full-fallback", cursor: "fallback-100", turns: Array.from({ length: 100 }, (_, index) => turn(100 + index)) });
@@ -323,11 +334,9 @@ try {
     await pane.unroute("**/pane/conversation?*");
     await pane.reload();
     await pane.locator(".chat-turn-agent").first().waitFor();
-    await pane.keyboard.press("ControlOrMeta+f");
-    await pane.getByRole("searchbox", { name: "Find in messages", exact: true }).fill("Fallback turn 0 ");
-    await pane.locator(".find-bar-count").getByText("1 of 1", { exact: true }).waitFor();
+    await oldestTurn(pane, "Fallback turn 0 ");
     await fallback.close(); bodies.set(first, original); earlier.delete("fallback-100");
-    console.log("PASS rejected delta cursors preserve older saved history, usage and search");
+    console.log("PASS rejected delta cursors preserve older saved history, usage and oldest turn");
   }
 
   // A rewrite with the same native identity must discard the old prefix.
@@ -488,7 +497,7 @@ try {
   for (const known of [false, true]) {
     const closed: BrowserContext = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: { "x-fixture-client": "closed-slide" } });
     await closed.addInitScript((known) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true, chatHistoryCacheMB: 1 }));
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true, chatHistoryCacheMB: 1 }));
       if (known) sessionStorage.setItem("fixture-session", "fictional-closed-session");
     }, known);
     const turn = (index: number) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Closed turn ${index} ` + "x".repeat(2000) }] });
@@ -496,9 +505,10 @@ try {
     bodies.set(first, window(100));
     earlier.set("closed-100", { ...window(0), cursor: null });
     let pane: Page = await closed.newPage();
+    const initialAt = records.length;
     await pane.goto(`http://cache.test:${server.port}/`);
     await pane.locator(".chat-turn-agent").first().waitFor();
-    await until(() => records.some((record) => record.client === "closed-slide" && record.before === "closed-100"), "initial closed-tab history downloaded");
+    await until(() => records.slice(initialAt).some((record) => record.client === "closed-slide" && record.before === "closed-100"), "initial closed-tab history downloaded");
     await pane.locator(".chat-older").waitFor({ state: "detached" });
     await pane.waitForLoadState("networkidle");
     await settings(pane);
@@ -525,10 +535,7 @@ try {
       usage.push(usedAfter);
       assert(usedAfter <= usedBefore + 0.03, `closed-tab slide keeps storage near unique history: ${usedBefore} -> ${usedAfter} MB`);
       await pane.keyboard.press("Escape");
-      await pane.keyboard.press("ControlOrMeta+f");
-      await pane.getByRole("searchbox", { name: "Find in messages", exact: true }).fill("Closed turn 0 ");
-      await pane.locator(".find-bar-count").getByText("1 of 1", { exact: true }).waitFor();
-      await pane.keyboard.press("Escape");
+      await oldestTurn(pane, "Closed turn 0 ");
     }
     await closed.close(); bodies.delete(first);
     console.log(`PASS closed-tab sliding tails reuse validated older history with ${known ? "known" : "unknown"} client identity; usage=${usage.join(" -> ")} MB, at most4 transferred turns per reopen`);
@@ -536,7 +543,7 @@ try {
   for (const known of [false, true]) {
     const paused: BrowserContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     await paused.addInitScript((known) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
       if (known) sessionStorage.setItem("fixture-session", "fictional-toggle-session");
     }, known);
     const prefix: ConversationResponse = { source: "claude-transcript", history_id: "fictional-toggle", cursor: null, turns: [
@@ -548,10 +555,7 @@ try {
     const pane: Page = await paused.newPage();
     await pane.goto(`http://cache.test:${server.port}/`);
     await pane.locator(".chat-turn-agent").first().waitFor();
-    await pane.keyboard.press("ControlOrMeta+f");
-    await pane.getByRole("searchbox", { name: "Find in messages", exact: true }).fill("Retained oldest turn");
-    await pane.locator(".find-bar-count").getByText("1 of 1", { exact: true }).waitFor();
-    await pane.keyboard.press("Escape");
+    await oldestTurn(pane, "Retained oldest turn");
     await pane.evaluate(() => document.fonts.ready);
     const position = () => pane.getByRole("log").first().evaluate((node) => {
       const viewport = node.getBoundingClientRect();
@@ -571,15 +575,13 @@ try {
     const after = await position();
     assert.equal(after.key, anchor.key, "disabling caching retains the visible older row");
     assert(after.offset !== null && Math.abs(after.offset - anchor.offset!) <= 1, "disabling caching preserves the reader offset within1px");
-    await pane.keyboard.press("ControlOrMeta+f");
-    await pane.getByRole("searchbox", { name: "Find in messages", exact: true }).fill("Retained oldest turn");
-    await pane.locator(".find-bar-count").getByText("1 of 1", { exact: true }).waitFor();
+    await oldestTurn(pane, "Retained oldest turn");
     await paused.close(); bodies.delete(first);
-    console.log(`PASS disabling cache retains older rows, anchor and search with real legacy shape and ${known ? "known" : "unknown"} client identity`);
+    console.log(`PASS disabling cache retains older rows, anchor and oldest rows with real legacy shape and ${known ? "known" : "unknown"} client identity`);
   }
   {
     const rewritten = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-    await rewritten.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await rewritten.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     const prefix: ConversationResponse = { source: "claude-transcript", history_id: "fictional-offline-rewrite", cache_session: "fictional-offline-native-session", cursor: null,
       turns: [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Original oldest settled prefix" }] }, { role: "user", ts: null, parts: [{ kind: "text", text: "Settled prefix ending" }] }] };
     earlier.set("offline-prefix", prefix);
@@ -602,7 +604,7 @@ try {
   }
   {
     const sliding = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-    await sliding.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true, chatHistoryCacheMB: 1 })));
+    await sliding.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true, chatHistoryCacheMB: 1 })));
     const turn = (index: number) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Sliding turn ${index} ` + "x".repeat(2000) }] });
     const window = (start: number): ConversationResponse => ({ source: "claude-transcript", history_id: "fictional-sliding-storage", cursor: `storage-${start}`, turns: Array.from({ length: 100 }, (_, index) => turn(start + index)) });
     bodies.set(first, window(100));
@@ -627,7 +629,7 @@ try {
   }
   {
     const gapContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-    await gapContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await gapContext.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     bodies.set(first, fixture(first));
     const page = await gapContext.newPage();
     await page.goto(`http://cache.test:${server.port}/`);
@@ -666,7 +668,7 @@ try {
   }
   for (const reduced of [false, true]) {
     const reveal = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: reduced ? "reduce" : "no-preference" });
-    await reveal.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await reveal.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     bodies.set(first, { source: "claude-transcript", history_id: "fictional-reveal", cursor: null, turns: [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Initial reveal content" }] }] });
     const pane = await reveal.newPage();
     await pane.goto(`http://cache.test:${server.port}/`);
@@ -691,7 +693,7 @@ try {
   }
   {
     const touch = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-    await touch.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await touch.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     bodies.set(first, { source: "claude-transcript", history_id: "fictional-touch-tail", cursor: null, turns: Array.from({ length: 20 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Touch tail row ${index}. ` + "Fictional paragraph. ".repeat(25) }] })) });
     const pane = await touch.newPage();
     const native = await touch.newCDPSession(pane);
@@ -732,7 +734,7 @@ try {
   const swipeResults: { text: string | null; offset: number; nativeTravel: number }[] = [];
   for (const fillDuringSwipe of [false, true]) {
     const touch = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
-    await touch.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    await touch.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
     const mobile = await touch.newPage();
     const native = await touch.newCDPSession(mobile);
     const turns = Array.from({ length: 40 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null,
@@ -838,7 +840,7 @@ try {
   console.log("PASS touch and momentum preserve the native endpoint within 1px and match the control swipe");
   for (const { cache, rate, updates } of [{ cache: false, rate: 4, updates: true }, ...[1, 2, 4, 6, 8].map((rate) => ({ cache: true, rate, updates: rate === 8 }))]) {
     const streaming: BrowserContext = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await streaming.addInitScript((enabled) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: enabled })), cache);
+    await streaming.addInitScript((enabled) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: enabled })), cache);
     const reading: Page = await streaming.newPage();
     const rendering = await streaming.newCDPSession(reading);
     await rendering.send("Emulation.setCPUThrottlingRate", { rate });
@@ -892,8 +894,9 @@ try {
     let anchor = await settledPosition();
     assert(anchor.row !== undefined && anchor.offset !== null);
     if (cache) {
+      const olderAt = records.length;
       releasePrepend();
-      await until(() => records.some((record) => record.before === "streaming-older"), "older streaming page loaded");
+      await until(() => records.slice(olderAt).some((record) => record.before === "streaming-older"), "older streaming page loaded");
       await reading.locator(".chat-older").waitFor({ state: "detached" });
       await reading.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       const prepended = await settledPosition();
@@ -931,7 +934,7 @@ try {
   bodies.delete(first);
   legacy = true;
   const compatible = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  await compatible.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+  await compatible.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
   const oldBridge = await compatible.newPage();
   await oldBridge.goto(`http://cache.test:${server.port}/`);
   await settings(oldBridge);
@@ -952,7 +955,7 @@ try {
   legacy = false;
   const unavailable = await browser.newContext();
   await unavailable.addInitScript(() => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
+    localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
     Object.defineProperty(window, "indexedDB", { get() { throw new DOMException("Synthetic storage denial", "SecurityError"); } });
   });
   const noStorage = await unavailable.newPage();
@@ -964,7 +967,7 @@ try {
   await unavailable.close();
   const missing = await browser.newContext();
   await missing.addInitScript(() => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
+    localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
     Object.defineProperty(window, "indexedDB", { value: undefined });
   });
   const missingStorage = await missing.newPage();
@@ -978,7 +981,7 @@ try {
   conditional = true;
   const quiet = await browser.newContext();
   await quiet.addInitScript(() => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
+    localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
     const metrics = window as unknown as { pageWrites: number };
     metrics.pageWrites = 0;
     const put = IDBObjectStore.prototype.put;
@@ -1006,7 +1009,7 @@ try {
 
   const resilient = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: { "x-fixture-client": "recovery" } });
   await resilient.addInitScript(() => {
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
+    if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true }));
     sessionStorage.removeItem("synthetic-write-held");
     // Fault injection at the browser-owned database boundary; application modules stay real.
     const put = IDBObjectStore.prototype.put;
@@ -1067,7 +1070,7 @@ try {
   await recovery.route("**/cache-corruption.html", (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Cache corruption fixture</title>" }), { times: 1 });
   await recovery.goto(`http://cache.test:${server.port}/cache-corruption.html`); // Keep the origin, with no app that can repair the injected damage.
   await recovery.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("herdr-web-ui:chat-history"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open("ovis:chat-history"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction("pages", "readwrite");
       const request = tx.objectStore("pages").openCursor();
@@ -1168,11 +1171,8 @@ try {
   await until(() => records.slice(beforeResume).some((r) => r.client === "recovery" && r.before === "older-1"), "automatic oldest page resume");
   assert(records.slice(beforeResume).filter((r) => r.client === "recovery" && r.before === "older-2").every((r) => r.delta && r.turns === 0), "completed older page only transfers its validation cursor");
   assert(records.slice(beforeResume).some((r) => r.client === "recovery" && r.before === "older-1"));
-  await recovery.keyboard.press("ControlOrMeta+f");
-  await recovery.getByRole("searchbox", { name: "Find in messages", exact: true }).fill("Beginning durable page");
-  await recovery.locator(".chat-find-count, .find-bar-count").getByText("1 of 1", { exact: true }).waitFor();
-  await recovery.keyboard.press("Escape");
-  console.log("PASS whole-history background download resumes and oldest turn is searchable without Load older");
+  await oldestTurn(recovery, "Beginning durable page");
+  console.log("PASS whole-history background download resumes and oldest turn is reachable without Load older");
   await settings(recovery);
   await recovery.getByRole("button", { name: "Clear cache on this device", exact: true }).click();
   await recovery.getByText("0.00 MB in 0 chats", { exact: true }).waitFor();
@@ -1238,12 +1238,9 @@ try {
   const beforeRaise = records.filter((record) => record.before === "oversized-oldest").length;
   await reopen();
   await until(() => records.filter((record) => record.before === "oversized-oldest").length > beforeRaise, "raised limit fills full history");
-  await recovery.keyboard.press("ControlOrMeta+f");
-  await recovery.getByRole("searchbox", { name: "Find in messages", exact: true }).fill("Oversized oldest");
-  await recovery.locator(".find-bar-count").getByText("1 of 1", { exact: true }).waitFor();
-  await recovery.keyboard.press("Escape");
+  await oldestTurn(recovery, "Oversized oldest");
   await settings(recovery);
   await recovery.getByText(/MB in 1 chats/).waitFor();
-  console.log("PASS raising the limit and reopening caches the whole transcript and finds its oldest turn");
+  console.log("PASS raising the limit and reopening caches the whole transcript and shows its oldest turn");
   await resilient.close();
 } finally { release(); await browser?.close(); server?.stop(true); rmSync(app, { recursive: true, force: true }); }
