@@ -25,6 +25,7 @@ import { claudePanePid, claudePaneSession, conversationImage, ConversationUnavai
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import { ConversationMonitor } from "./conversation-monitor.ts";
+import { conversationDelta } from "../shared/conversation-delta.ts";
 import { omoPanes } from "./omo.ts";
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
@@ -2528,7 +2529,7 @@ export function createServer(
           const etag = `W/"${version}"`;
           const headers = { etag, "cache-control": "no-store" };
           if (request.headers.get("if-none-match")?.replace(/^W\//, "") === etag.slice(2)) return new Response(null, { status: 304, headers });
-          return jsonResponse(conversation, 200, headers);
+          return jsonResponse(url.searchParams.get("incremental") === "1" ? await conversationDelta(conversation, url.searchParams.get("delta")) : conversation, 200, headers);
         } catch (error) {
           if (error instanceof HistoryChanged || error instanceof DevinHistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
           // an unrecognized pane is not an error: the client falls back to the

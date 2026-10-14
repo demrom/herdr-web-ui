@@ -10,6 +10,7 @@ export function useMachineApi() {
   return useMemo(() => ({
     fetchPaneTranscript: (pane: string, lines: number) => api.fetchPaneTranscript(pane, lines, id),
     fetchPaneConversation: (pane: string, page?: api.ConversationPageQuery) => api.fetchPaneConversation(pane, id, page),
+    cachedPaneHistory: (pane: string) => api.cachedPaneHistory(pane, id),
     fetchPanePrompt: (pane: string) => api.fetchPanePrompt(pane, id),
     fetchPanePromptState: (pane: string) => api.fetchPanePromptState(pane, id),
     answerPanePrompt: (answer: Parameters<typeof api.answerPanePrompt>[0]) => api.answerPanePrompt(answer, id),

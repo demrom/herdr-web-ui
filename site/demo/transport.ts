@@ -19,6 +19,7 @@ import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
+import { conversationDelta } from "../../shared/conversation-delta.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
 import machinesFixture from "./fixtures/machines.json";
@@ -716,7 +717,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     if (!chat) return json({ source: "scrollback", turns: [] });
     const source = agent === "claude" ? "claude-transcript" : agent === "codex" ? "codex-transcript" : agent === "gjc" ? "gjc-transcript" : agent === "omo" ? "omo-transcript" : agent === "pi" ? "pi-transcript" : agent === "devin" ? "devin-transcript" : agent === "hermes" ? "hermes-transcript" : "omp-transcript";
     // These demo fixtures have no native Grok/Agy lifecycle: omit optional activity.
-    return json({ source, turns: chat.turns, metadata: chat.metadata, cursor: null });
+    const body = { source, turns: chat.turns, metadata: chat.metadata, cursor: null } as const;
+    return json(url.searchParams.get("incremental") === "1" ? await conversationDelta({ ...body, history_id: `demo-${paneId}` }, url.searchParams.get("delta")) : body);
   }
   if (path === "/api/pane/plan") {
     if (method !== "GET") return error("method_not_allowed", "use GET", 400);

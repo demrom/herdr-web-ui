@@ -7,7 +7,8 @@
 
 import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { clearHistoryCache, setHistoryCacheLimit } from "./chatHistoryCache.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -72,6 +73,9 @@ export interface Settings {
   pageOverlapRows: number;
   /** Plain page keys scroll chat, including while its composer is focused. */
   chatPageKeys: boolean;
+  /** Opt-in parsed transcript storage on this device only. */
+  chatHistoryCache: boolean;
+  chatHistoryCacheMB: number;
   theme: ThemeSetting;
   density: Density;
   /** How much a workspace row says: its name, or its pane's title over its place. */
@@ -202,6 +206,8 @@ type TelemetrySourceSettings = Omit<Settings,
   | "quickReplies" | "usageOrder" | "usageHidden"
   // not collected: the report's schema (shared/telemetry.ts) has no field for it yet
   | "diffStyle" | "contrast" | "fontSmoothing" | "panelMotion" | "uiFontSize"
+  // not collected: transcript caching is a private device storage preference
+  | "chatHistoryCache" | "chatHistoryCacheMB"
   // not collected: only System mode reads them, and `palette` is already reported
   | "paletteLight" | "paletteDark">;
 
@@ -280,7 +286,7 @@ export const SETTING_SCOPE = {
   agentPins: "shared", agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showSuggestionChip: "shared", showUsage: "shared", usageCount: "shared", usagePace: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", highlightCode: "shared", defaultView: "device",
-  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", pageOverlapRows: "device", chatPageKeys: "device", density: "device",
+  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", pageOverlapRows: "device", chatPageKeys: "device", chatHistoryCache: "device", chatHistoryCacheMB: "device", density: "device",
   quietOpenedDone: "device", terminalFontSize: "device", terminalCursorStyle: "device", terminalCursorBlink: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
   narrowPaneFont: "device", chatFontSize: "device", chatFontFamily: "device", uiFontSize: "device", uiFontFamily: "device", codeFontFamily: "device", chatWidth: "device", enterSends: "device", attachLimit: "device",
@@ -306,6 +312,8 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcutOverrides: {},
   pageOverlapRows: 1,
   chatPageKeys: false,
+  chatHistoryCache: false,
+  chatHistoryCacheMB: 500,
   theme: "dark",
   density: "comfortable",
   sidebarRows: "two",
@@ -488,6 +496,8 @@ export function sanitizeSettings(raw: unknown): Settings {
     keyBarItems: sanitizeKeyBarItems(record["keyBarItems"], keyBarFallback),
     shortcutOverrides: sanitizeShortcutOverrides(record["shortcutOverrides"]),
     chatPageKeys: typeof record["chatPageKeys"] === "boolean" ? record["chatPageKeys"] : DEFAULT_SETTINGS.chatPageKeys,
+    chatHistoryCache: typeof record["chatHistoryCache"] === "boolean" ? record["chatHistoryCache"] : DEFAULT_SETTINGS.chatHistoryCache,
+    chatHistoryCacheMB: typeof record["chatHistoryCacheMB"] === "number" && Number.isFinite(record["chatHistoryCacheMB"]) ? Math.max(1, Math.min(10000, Math.floor(record["chatHistoryCacheMB"]))) : DEFAULT_SETTINGS.chatHistoryCacheMB,
     pageOverlapRows: typeof record["pageOverlapRows"] === "number" && Number.isFinite(record["pageOverlapRows"])
       ? Math.min(100, Math.max(0, Math.round(record["pageOverlapRows"]))) : DEFAULT_SETTINGS.pageOverlapRows,
     theme: theme === "dark" || theme === "light" || theme === "system" ? theme : DEFAULT_SETTINGS.theme,
@@ -691,6 +701,12 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  const cachedBefore = useRef(settings.chatHistoryCache);
+  useEffect(() => {
+    if (settings.chatHistoryCache) void setHistoryCacheLimit(settings.chatHistoryCacheMB * 1_000_000);
+    else if (cachedBefore.current) void clearHistoryCache();
+    cachedBefore.current = settings.chatHistoryCache;
+  }, [settings.chatHistoryCache, settings.chatHistoryCacheMB]);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {

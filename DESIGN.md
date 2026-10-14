@@ -936,6 +936,8 @@ One set for both themes: the card is island black wherever it shows.
   document as a `role="status"` a screen reader can read (`.conn-live`; never `display: none`).
 
 ### Chat turn (`.chat-turn`)
+- Settings > Chat offers an optional device-local history cache, off by default. It restores already downloaded native pages, then validates them over REST with a prefix-checked delta; it does not queue input. The existing settings card holds the switch, a size field (500 MB by default), serialized page usage and Clear cache. Least recently opened chats are evicted as whole chats within the selected limit; IndexedDB overhead is outside the displayed estimate and browser quotas may be lower. Disabling the cache, signing out, changing authentication or losing access clears saved transcripts.
+- Complete pages and their reopening alias commit in one IndexedDB transaction, guarded by the chat revision and clear epoch. Failed downloads or writes preserve the last durable page; reopening resumes missing turns and interrupted older pages. Stored page integrity is checked before display, and damaged records are discarded. Storage failure uses the existing live HTTP path. Clear also revokes background persistence for the current view until reopening.
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single
   scroll owner. The centered lane, exchange spacing and prompt portal stay separate from
   row lifetime. The list anchors prepends by a browser-local slot, never by a timestamp or

@@ -65,6 +65,7 @@ run_script scripts/settings-pages-demo-regression.ts
 run_script scripts/portal-regression.ts
 run_script scripts/deep-link-demo-regression.ts
 run_script scripts/chat-history-browser-qa.ts
+run_script scripts/chat-cache-demo-regression.ts
 run_script scripts/chat-virtual-browser-qa.ts
 run_script scripts/chat-selection-copy-regression.ts
 run_script scripts/chat-fallback-browser-qa.ts

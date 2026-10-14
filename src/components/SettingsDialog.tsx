@@ -43,6 +43,7 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
+import { clearHistoryCache, historyCacheUsage, HISTORY_CACHE_EVENT } from "../lib/chatHistoryCache.ts";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -333,6 +334,23 @@ function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
   const touch = useMediaQuery("(pointer: coarse)");
+  const [usage, setUsage] = useState<Awaited<ReturnType<typeof historyCacheUsage>> | undefined>(undefined);
+  const [clearing, setClearing] = useState(false);
+  const [cacheLimit, setCacheLimit] = useState(String(settings.chatHistoryCacheMB));
+  useEffect(() => setCacheLimit(String(settings.chatHistoryCacheMB)), [settings.chatHistoryCacheMB]);
+  const commitCacheLimit = () => {
+    const parsed = Number(cacheLimit);
+    const value = cacheLimit.trim() && Number.isFinite(parsed) ? Math.min(10000, Math.max(1, Math.floor(parsed))) : settings.chatHistoryCacheMB;
+    setCacheLimit(String(value));
+    update({ chatHistoryCacheMB: value });
+  };
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => { void historyCacheUsage().then((next) => { if (!cancelled) setUsage(next); }); };
+    refresh();
+    window.addEventListener(HISTORY_CACHE_EVENT, refresh);
+    return () => { cancelled = true; window.removeEventListener(HISTORY_CACHE_EVENT, refresh); };
+  }, []);
   return (
     <>
       <SettingsGroup>
@@ -358,6 +376,23 @@ function ChatPage() {
         </SettingsRow>
         <SettingsRow label={t("Highlight code")} description={t("Colors code by its language. Off, code is plain text.")}>
           <Toggle label={t("Highlight code")} checked={settings.highlightCode} onChange={(highlightCode) => update({ highlightCode })} />
+        </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup title={t("Chat history cache")} section="history-cache" note={t("Saved chats stay on this device and may contain sensitive information. Signing out, changing authentication or turning this off clears them.")}>
+        <SettingsRow label={t("Cache chat history on this device")} description={t("Open saved chats immediately, then download only changed turns. Off by default.")}>
+          <Toggle label={t("Cache chat history on this device")} checked={settings.chatHistoryCache} onChange={(chatHistoryCache) => update({ chatHistoryCache })} />
+        </SettingsRow>
+        <SettingsRow label={t("Maximum chat cache (MB)")} htmlFor="chat-cache-limit" description={t("The least recently opened chats are removed first. Browser storage limits may be lower.")} wide>
+          <input id="chat-cache-limit" className="input" type="number" min={1} max={10000} step={1} value={cacheLimit} onChange={(event) => setCacheLimit(event.currentTarget.value)} onBlur={commitCacheLimit} onKeyDown={(event) => {
+            if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
+          }} />
+        </SettingsRow>
+        <SettingsRow label={t("Storage used")} description={<span role="status">{usage === undefined ? t("Loading…") : "unavailable" in usage ? (usage.unavailable === "missing" ? t("Chat cache is unavailable: IndexedDB is missing.") : usage.unavailable === "denied" ? t("Chat cache is unavailable: browser storage access was denied.") : t("Chat cache is unavailable: IndexedDB could not be opened.")) : t("{used} MB in {count} chats", { used: (usage.bytes / 1_000_000).toFixed(2), count: usage.chats })}</span>} wide>
+          <button type="button" className="btn" disabled={clearing || (usage !== undefined && "unavailable" in usage)} onClick={() => {
+            setClearing(true);
+            void clearHistoryCache().finally(() => setClearing(false));
+          }}>{t("Clear cache on this device")}</button>
         </SettingsRow>
       </SettingsGroup>
 
