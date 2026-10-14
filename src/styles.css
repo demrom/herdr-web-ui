@@ -7,7 +7,7 @@
  * the attribute); `[data-density="compact"]` overrides the type scale and row
  * heights. The base blocks are the amber palette, the default and the look before
  * settings load; `[data-palette]` blocks override them for the opt-in report,
- * charcoal, catppuccin, lilac and forest palettes. `[data-contrast]` (after them) re-mixes the
+ * charcoal, catppuccin, lilac, forest and dracula palettes. `[data-contrast]` (after them) re-mixes the
  * text and border tokens under <html> by the Contrast step. xterm cannot read CSS custom
  * properties, so the --term-* group is mirrored in settings.ts `terminalTheme()`.
  * Component-scoped rules live beside their component (Sidebar.css,
@@ -681,6 +681,98 @@
   --syntax-type: #166578;
   --syntax-variable: #20352a;
   --syntax-meta: #68489c;
+}
+
+/* Dracula (draculatheme.com/spec): Classic in dark, Alucard Classic in light.
+   Dark chrome uses the official VS Code port's BGDark, elevated BGLight and hover BGLighter.
+   Comment is lightened for AA on hover; blocked red is lightened for its tinted badge.
+   Alucard chrome uses Floating and Background Lighter; status colors are darkened for AA
+   on tinted hovered rows. Yellow is darkened for AA on the panel. Syntax follows
+   the VS Code classic mapping. */
+[data-theme="dark"][data-palette="dracula"] {
+  --bg: #282a36;
+  --bg-panel: #21222c;
+  --bg-elevated: #343746;
+  --bg-hover: #424450;
+  --bg-input: #191a21;
+  --border: #44475a;
+  --border-strong: #6272a4;
+  --text: #f8f8f2;
+  --text-dim: #a9b2cd;
+  --text-strong: #f8f8f2;
+  --accent: #bd93f9;
+  --accent-tint: rgba(189, 147, 249, 0.12);
+  --primary: #bd93f9;
+  --primary-hover: #d6acff;
+  --primary-text: #282a36;
+  --primary-tint: rgba(189, 147, 249, 0.16);
+  --status-idle: #a9b2cd;
+  --status-working: #8be9fd;
+  --status-blocked: #ffb8b8;
+  --status-done: #50fa7b;
+  --status-working-tint: rgba(139, 233, 253, 0.12);
+  --status-blocked-tint: rgba(255, 184, 184, 0.12);
+  --status-done-tint: rgba(80, 250, 123, 0.12);
+  --danger-tint: rgba(255, 184, 184, 0.12);
+  --danger-text: #ffb8b8;
+  --notice: #f1fa8c;
+  --scrim: rgba(25, 26, 33, 0.6);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --term-bg: #282a36;
+  --term-fg: #f8f8f2;
+  --term-cursor: #bd93f9;
+  --term-selection: #44475a;
+  --syntax-keyword: #ff79c6;
+  --syntax-function: #50fa7b;
+  --syntax-string: #f1fa8c;
+  --syntax-number: #bd93f9;
+  --syntax-type: #8be9fd;
+  --syntax-variable: #f8f8f2;
+  --syntax-meta: #ffb86c;
+}
+
+[data-theme="light"][data-palette="dracula"] {
+  --bg: #fffbeb;
+  --bg-panel: #efeddc;
+  --bg-elevated: #fffbeb;
+  --bg-hover: #ece9df;
+  --bg-input: #fffbeb;
+  --border: #cfcfde;
+  --border-strong: #bcbab3;
+  --text: #1f1f1f;
+  --text-dim: #6c664b;
+  --text-strong: #1f1f1f;
+  --accent: #644ac9;
+  --accent-tint: rgba(100, 74, 201, 0.1);
+  --primary: #644ac9;
+  --primary-hover: #7862d0;
+  --primary-text: #fffbeb;
+  --primary-tint: rgba(100, 74, 201, 0.12);
+  --status-idle: #6c664b;
+  --status-working: #035b82;
+  --status-blocked: #a32b1e;
+  --status-done: #116008;
+  --status-working-tint: rgba(3, 91, 130, 0.12);
+  --status-blocked-tint: rgba(163, 43, 30, 0.1);
+  --status-done-tint: rgba(17, 96, 8, 0.12);
+  --danger-tint: rgba(163, 43, 30, 0.1);
+  --danger-text: #a32b1e;
+  --notice: #7c6714;
+  --scrim: rgba(31, 31, 31, 0.35);
+  --shadow-drawer: 0 0 40px rgba(31, 31, 31, 0.22);
+  --shadow-pop: 0 16px 48px rgba(31, 31, 31, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(31, 31, 31, 0.07);
+  --term-bg: #fffbeb;
+  --term-fg: #1f1f1f;
+  --term-cursor: #644ac9;
+  --term-selection: #cfcfde;
+  --syntax-keyword: #a3144d;
+  --syntax-function: #14710a;
+  --syntax-string: #7c6714;
+  --syntax-number: #644ac9;
+  --syntax-type: #036a96;
+  --syntax-variable: #1f1f1f;
+  --syntax-meta: #a34d14;
 }
 
 /* Contrast (Settings → Appearance → Contrast): text and hairlines stand out more or less than the

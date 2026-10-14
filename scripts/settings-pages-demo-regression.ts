@@ -157,7 +157,38 @@ try {
                 };
               });
               assert.deepEqual(colors, terminalTheme("dark", "forest"), "Forest's --term-* tokens reach the page as the theme xterm is given");
-              if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `forest-palette-${width}.png`), fullPage: true });
+              if (process.env.UI_EVIDENCE_DIR) {
+                await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getComputedTiming().iterations === Infinity), null, { timeout: 5000 });
+                await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `forest-palette-${width}.png`), fullPage: true });
+              }
+              await palette.selectOption("dracula");
+              for (const theme of ["dark", "light"] as const) {
+                await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: theme === "dark" ? "Dark" : "Light", exact: true }).tap();
+                await page.waitForFunction((theme) => document.documentElement.dataset.palette === "dracula" && document.documentElement.dataset.theme === theme, theme);
+                assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).palette), "dracula");
+                const colors = await page.evaluate(() => {
+                  const root = getComputedStyle(document.documentElement);
+                  return {
+                    background: root.getPropertyValue("--term-bg").trim(),
+                    foreground: root.getPropertyValue("--term-fg").trim(),
+                    cursor: root.getPropertyValue("--term-cursor").trim(),
+                    selectionBackground: root.getPropertyValue("--term-selection").trim(),
+                  };
+                });
+                assert.deepEqual(colors, terminalTheme(theme, "dracula"), "Dracula's --term-* tokens reach the page as the theme xterm is given");
+                assert.deepEqual(await cutOff(page), [], `Dracula ${theme} fits a ${width}px phone`);
+                if (process.env.UI_EVIDENCE_DIR) {
+                  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getComputedTiming().iterations === Infinity), null, { timeout: 5000 });
+                  await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dracula-${theme}-settings-${width}.png`), fullPage: true });
+                }
+                await page.reload();
+                await page.locator(".conn-live").waitFor({ state: "attached" });
+                await page.waitForFunction((theme) => document.documentElement.dataset.palette === "dracula" && document.documentElement.dataset.theme === theme, theme);
+                await openSettings(page);
+                await openSettingsPage(page, "Appearance");
+                console.log(`PASS Dracula ${theme}: saved palette, reload, terminal tokens and ${width}px settings`);
+              }
+              await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Dark", exact: true }).tap();
               // the pages after this one are checked on the default palette
               await palette.selectOption("amber");
               await page.waitForFunction(() => document.documentElement.dataset.palette === "amber");
@@ -448,6 +479,49 @@ try {
         console.log("PASS a reload on a preview opened over Settings closes Settings and keeps the file");
       } finally {
         await desktop.close();
+      }
+      // Dracula shares the same settings and terminal contract on desktop and phone.
+      for (const width of [1440, 390]) {
+        for (const theme of ["dark", "light"] as const) {
+          const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+          try {
+            await context.addInitScript((settings) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify(settings)), { ...SETTINGS, palette: "dracula", theme });
+            const page = await context.newPage();
+            const errors: string[] = [];
+            page.on("pageerror", (error) => errors.push(error.message));
+            await page.goto(url);
+            await page.locator(".conn-live").waitFor({ state: "attached" });
+            await openSettings(page);
+            await openSettingsPage(page, "Appearance");
+            assert.equal(await page.getByLabel("Colors", { exact: true }).inputValue(), "dracula");
+            assert.deepEqual(await cutOff(page), [], `Dracula ${theme} Appearance fits ${width}px`);
+            await page.evaluate(() => document.fonts.ready);
+            const shot = async (screen: string): Promise<void> => {
+              if (process.env.UI_EVIDENCE_DIR) {
+                await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getComputedTiming().iterations === Infinity), null, { timeout: 5000 });
+                await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dracula-${theme}-${screen}-${width}.png`), fullPage: true });
+              }
+            };
+            await shot("settings");
+            await page.getByRole("button", { name: "Close settings", exact: true }).click();
+            const lens = page.getByRole("group", { name: "Pane view", exact: true });
+            await lens.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+            await page.locator(".composer textarea").waitFor();
+            await shot("chat");
+            await lens.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+            await page.waitForFunction(() => [...document.querySelectorAll(".xterm-screen")].some((screen) => screen.textContent?.replace(/\u00a0/g, " ").includes("This is the demo.")), null, { timeout: 10000 });
+            await shot("terminal");
+            if (width === 390) {
+              await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+              await page.locator("#workspace-drawer.is-open").waitFor();
+              await shot("sidebar");
+            }
+            assert.deepEqual(errors, []);
+            console.log(`PASS Dracula ${theme}: Appearance, chat and terminal at ${width}px`);
+          } finally {
+            await context.close();
+          }
+        }
       }
     } finally {
       await browser.close();
