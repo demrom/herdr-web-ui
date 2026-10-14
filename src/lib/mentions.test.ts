@@ -69,6 +69,13 @@ describe("applyCompletion", () => {
     expect(trigger).toEqual({ kind: "slash", query: "del", start: 15, end: 24 });
     expect(applyCompletion(text, trigger!, "$delegate ")).toEqual({ text: "run tests then $delegate afterwards", caret: 25 });
   });
+
+  it("keeps punctuation after a mid-message skill token", () => {
+    const text = "run /del, next";
+    const trigger = activeTrigger(text, 8);
+    expect(trigger).toEqual({ kind: "slash", query: "del", start: 4, end: 8 });
+    expect(applyCompletion(text, trigger!, "/delegate ")).toEqual({ text: "run /delegate, next", caret: 13 });
+  });
 });
 
 describe("$ skills", () => {
