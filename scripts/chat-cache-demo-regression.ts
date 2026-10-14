@@ -495,9 +495,10 @@ try {
     bodies.set(first, window(100));
     earlier.set("closed-100", { ...window(0), cursor: null });
     let pane: Page = await closed.newPage();
+    const initialAt = records.length;
     await pane.goto(`http://cache.test:${server.port}/`);
     await pane.locator(".chat-turn-agent").first().waitFor();
-    await until(() => records.some((record) => record.client === "closed-slide" && record.before === "closed-100"), "initial closed-tab history downloaded");
+    await until(() => records.slice(initialAt).some((record) => record.client === "closed-slide" && record.before === "closed-100"), "initial closed-tab history downloaded");
     await pane.locator(".chat-older").waitFor({ state: "detached" });
     await pane.waitForLoadState("networkidle");
     await settings(pane);
@@ -891,8 +892,9 @@ try {
     let anchor = await settledPosition();
     assert(anchor.row !== undefined && anchor.offset !== null);
     if (cache) {
+      const olderAt = records.length;
       releasePrepend();
-      await until(() => records.some((record) => record.before === "streaming-older"), "older streaming page loaded");
+      await until(() => records.slice(olderAt).some((record) => record.before === "streaming-older"), "older streaming page loaded");
       await reading.locator(".chat-older").waitFor({ state: "detached" });
       await reading.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       const prepended = await settledPosition();
