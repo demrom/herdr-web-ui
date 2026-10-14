@@ -234,7 +234,7 @@ try {
           (window as any).fitHoldSend = true;
         }, theme);
         const box = page.getByRole("textbox", { name: "Message", exact: true });
-        const button = page.locator(".composer-send");
+        const button = page.getByRole("button", { name: "Send message", exact: true });
         const geometry = () => button.evaluate((node) => { const { x, y, width, height } = node.getBoundingClientRect(); return { x, y, width, height }; });
         const empty = await geometry();
         assert.equal(await button.getAttribute("aria-busy"), null, "empty is not busy");
@@ -243,7 +243,7 @@ try {
         await button.click();
         await page.waitForFunction(() => typeof (window as any).fitReply === "function");
         assert.equal(await button.getAttribute("aria-busy"), "true", "a held receipt shows in-flight progress");
-        assert.equal(await button.getAttribute("aria-label"), "Sending…");
+        assert.equal(await button.getAttribute("title"), "Sending…", "sending describes the stable Send action");
         assert.equal(await button.isDisabled(), true);
         assert.equal(await box.inputValue(), "Check the delivery feedback.", "text stays until acknowledged");
         assert.deepEqual(await geometry(), before, "sending does not move or resize the button");

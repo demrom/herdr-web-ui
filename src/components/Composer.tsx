@@ -1298,7 +1298,7 @@ export function Composer({
             <button
               type="button"
               className="composer-action composer-send"
-              aria-label={sending ? t("Sending…") : t("Send message")}
+              aria-label={t("Send message")}
               title={sending ? t("Sending…") : t("Send message")}
               aria-busy={sending || undefined}
               disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
