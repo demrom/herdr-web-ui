@@ -12,6 +12,7 @@ import { openSettingsPage } from "./settings-page.ts";
 import { sheetsSettled } from "./sheets-settled.ts";
 import type { Machine } from "../shared/protocol.ts";
 import { FAVICON_CANDIDATES } from "../src/lib/projectFavicon.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-file-back-"));
 const codexHome = join(root, "codex-home");
@@ -106,7 +107,7 @@ try {
   await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "codex", state: "idle", agent_session_path: transcript });
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), codexHome });
   const origin = `http://127.0.0.1:${server.port}`;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   // seeded once: a later step changes a setting and reloads. The chat's own font size and

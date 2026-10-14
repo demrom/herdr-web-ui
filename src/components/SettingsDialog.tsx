@@ -39,6 +39,8 @@ import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
+import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
+import { RenderBoundary } from "./RenderBoundary.tsx";
 import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
 
 export interface SettingsDialogProps {
@@ -938,7 +940,41 @@ function AboutPage({ updates, herdrVersion, bridgesFollow }: { updates: UpdatesM
 
 export function SettingsDialog(props: SettingsDialogProps) {
   // mounted per opening: every opening starts on the list, with nothing left from the last one
-  return props.open ? <OpenSettingsDialog {...props} /> : null;
+  // a page that cannot be drawn closes to the app instead of blanking it; the next opening tries again
+  return props.open ? <RenderBoundary resetKey={null} fallback={() => <SettingsCrash onClose={props.onClose} overPreview={props.overPreview ?? false} />}>
+    <CrashProbe region="settings" />
+    <OpenSettingsDialog {...props} />
+  </RenderBoundary> : null;
+}
+
+/**
+ * Still a modal: Escape, the swipe down on a phone, the system Back button and the kept focus
+ * close it as they close Settings, and it sits over a file preview as Settings does.
+ */
+function SettingsCrash({ onClose, overPreview }: { onClose: () => void; overPreview: boolean }) {
+  const t = useT();
+  // one entry of the history, whatever the crashed dialog had recorded: Back takes it off and the
+  // app closes Settings (lib/settingsHistory.ts). Not settingsLevels: a wide dialog's list is none
+  useEffect(() => { recordSettings([{ page: null, keyBar: false }]); }, []);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: closeRef });
+  useSheetSwipe(surface, onClose);
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return (
+    <div className={overPreview ? "modal-scrim settings-over-preview" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div ref={surface} className="modal" role="dialog" aria-modal="true" aria-label={t("Settings")} tabIndex={-1}>
+        <RegionCrash message={t("Settings can't be shown.")} retry={onClose} retryLabel={t("Close")} buttonRef={closeRef} />
+      </div>
+    </div>
+  );
 }
 
 function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, actions, updates, auth, herdrVersion, onEnableNotifications, overPreview = false }: SettingsDialogProps) {

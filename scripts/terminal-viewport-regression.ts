@@ -10,9 +10,10 @@ import type { PaneFindResponse } from "../shared/protocol.ts";
 import { createServer } from "../server/index.ts";
 import { UsageService } from "../server/usage.ts";
 import { herdrRpc, paneScrollInfo, workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 const state = mkdtempSync(join(tmpdir(), "herdr-viewport-browser-"));
 const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, usage: new UsageService(undefined, []) });
-const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
 let workspace: string | undefined;
 async function until(check: () => Promise<boolean>, message: string): Promise<void> {
   const deadline = Date.now() + 10000;
@@ -133,6 +134,64 @@ try {
   await page.keyboard.press("End");
   await page.waitForFunction(() => { const bar = document.querySelector('[role="scrollbar"]'); return bar?.getAttribute("aria-valuenow") === bar?.getAttribute("aria-valuemax"); });
   await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "End reaches native bottom");
+
+  // The metrics poll: a quiet pane at the bottom backs off, output brings it back, and a view scrolled
+  // up into history keeps reading every second, since growing history there may send no output.
+  const metricsReads: number[] = [];
+  const countRead = (request: import("playwright-core").Request) => {
+    if (request.method() === "GET" && request.url().includes("/api/pane/scroll?")) metricsReads.push(Date.now());
+  };
+  page.on("request", countRead);
+  try {
+    await until(async () => metricsReads.length > 0, "the poll reads metrics after End");
+    const quietFrom = metricsReads.at(-1)!;
+    // fixed wait: proving the quiet pane's poll stays sparse over a window (a 1 s poll makes 8 reads)
+    await Bun.sleep(8000);
+    const quietReads = metricsReads.filter((at) => at > quietFrom).length;
+    assert.ok(quietReads <= 4, `a quiet pane backs its metrics poll off, read ${quietReads} times in 8 s`);
+    // A failed read on the backed-off poll hides the scrollbar; the retry must not wait out the idle backoff.
+    let failedAt = 0;
+    const failOnce = async (route: import("playwright-core").Route) => {
+      if (failedAt || route.request().method() !== "GET") return route.continue();
+      failedAt = Date.now();
+      await route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: "busy" }) });
+    };
+    await page.route("**/api/pane/scroll?**", failOnce);
+    try {
+      const failDeadline = Date.now() + 20000;
+      while (!failedAt) { assert.ok(Date.now() < failDeadline, "the backed-off poll reads again within its 15 s cap"); await Bun.sleep(25); }
+      // the failed request's own read event may land just after failedAt, so the retry starts 50 ms later
+      const afterFailure = () => metricsReads.find((at) => at > failedAt + 50);
+      await until(async () => afterFailure() !== undefined || Date.now() - failedAt > 3000, "a read follows the failed one");
+      const retry = afterFailure();
+      assert.ok(retry !== undefined && retry - failedAt < 1500, `a failed metrics read retries within about 1 s, took ${retry === undefined ? "over 3000" : retry - failedAt} ms`);
+      await page.locator('[role="scrollbar"]').waitFor({ state: "visible", timeout: 2000 });
+    } finally { await page.unroute("**/api/pane/scroll?**", failOnce); }
+    const beforeOutput = metricsReads.length;
+    const outputAt = Date.now();
+    await herdrRpc("pane.send_input", { pane_id: paneId, text: "poll_wake", keys: ["enter"] });
+    await until(async () => metricsReads.length > beforeOutput, "output wakes the backed-off poll");
+    assert.ok(metricsReads[beforeOutput]! - outputAt < 1500, `output brings the next read back within about 1 s, took ${metricsReads[beforeOutput]! - outputAt} ms`);
+
+    await scrollbar.focus();
+    await page.keyboard.press("Home");
+    await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom > 100, "Home scrolls up before the held-view poll check");
+    await page.waitForFunction(() => document.querySelector('[role="scrollbar"]')?.getAttribute("aria-valuenow") === "0");
+    const upFrom = Date.now();
+    // fixed wait: proving the scrolled-up poll keeps its 1 s cadence over a window the idle backoff would stretch
+    await Bun.sleep(6000);
+    const upReads = metricsReads.filter((at) => at > upFrom).length;
+    assert.ok(upReads >= 4, `a view scrolled up keeps reading metrics about every second, read ${upReads} times in 6 s`);
+    const heldMax = Number(await scrollbar.getAttribute("aria-valuemax"));
+    const grownAt = Date.now();
+    for (let line = 0; line < 5; line++) await herdrRpc("pane.send_input", { pane_id: paneId, text: `held_view_${line}`, keys: ["enter"] });
+    await page.waitForFunction((held) => Number(document.querySelector('[role="scrollbar"]')?.getAttribute("aria-valuemax")) > held, heldMax, { timeout: 3000 });
+    assert.ok(Date.now() - grownAt < 3000, "history grown under a scrolled-up view reaches the scrollbar within about 3 s");
+  } finally { page.off("request", countRead); }
+  await scrollbar.focus();
+  await page.keyboard.press("End");
+  await page.waitForFunction(() => { const bar = document.querySelector('[role="scrollbar"]'); return bar?.getAttribute("aria-valuenow") === bar?.getAttribute("aria-valuemax"); });
+  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "End returns to the native bottom after the poll checks");
   const box = (await scrollbar.boundingBox())!;
   const thumb = (await scrollbar.locator(".terminal-history-thumb").boundingBox())!;
   await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);

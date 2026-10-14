@@ -17,7 +17,7 @@ export interface RepoDiffProps {
   folded: boolean;
   wrap: boolean;
   theme: "dark" | "light";
-  /** colored in the virtualizer's worker; false draws plain rows (the setting off, or too long, which the host says) */
+  /** colored in the pool's worker; false draws plain rows, still windowed by the pool's manager (the setting off, or too long, which the host says) */
   colored: boolean;
 }
 
@@ -89,10 +89,16 @@ export default function RepoDiff({ patch, style, folded, wrap, theme, colored }:
   const metrics = useMemo(() => (lineHeight === null ? null : { ...DEFAULT_VIRTUAL_FILE_METRICS, lineHeight }), [lineHeight]);
 
   if (fileDiff === null || fileDiff.hunks.length === 0) return <p className="repo-diff-note">{t("No lines changed.")}</p>;
-  const rows = <Virtualizer className="repo-diff-scroll" contentClassName="repo-diff-column" config={SCROLL_CONFIG}>
-    {metrics !== null && <FileDiff className="repo-diff-file" fileDiff={fileDiff} options={options} metrics={metrics} disableWorkerPool={!colored} />}
-  </Virtualizer>;
+  // plain rows go through the pool too, though they never reach a worker (tokenizeMaxLength 0 keeps
+  // the diff massive, so no highlight is queued): without one the package builds rows for every line
+  // of the diff on the page, again on each render (each scroll), where the pool's manager builds
+  // only the window's rows. The 10 000-line diff held the page 130-270 ms per scroll step that way
+  // at a 4x CPU slowdown.
   return <div ref={hostRef} className="repo-diff" data-style={style} data-colored={colored ? "" : undefined} data-folded={folded ? "" : undefined}>
-    {colored ? <DiffWorkerPool>{rows}</DiffWorkerPool> : rows}
+    <DiffWorkerPool>
+      <Virtualizer className="repo-diff-scroll" contentClassName="repo-diff-column" config={SCROLL_CONFIG}>
+        {metrics !== null && <FileDiff className="repo-diff-file" fileDiff={fileDiff} options={options} metrics={metrics} />}
+      </Virtualizer>
+    </DiffWorkerPool>
   </div>;
 }

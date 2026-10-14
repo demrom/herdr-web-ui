@@ -35,6 +35,8 @@ export interface AppActions {
    * selected pane. A move made elsewhere (the TUI, another client) never moves the selection.
    */
   paneMoved: (machineId: string, previousPaneId: string, paneId: string) => void;
+  /** A pane this page started an agent in opens in an agent's lens, whatever its first snapshot says. */
+  agentStarted: (machineId: string, paneId: string) => void;
   openFind: () => void;
   openSettings: () => void;
   /** the Add PC dialog, from Settings → Remote PCs and the palette; Settings closes first */

@@ -4,10 +4,36 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { selectBrowserScripts, serialBrowserScripts } from "./ci-browser-parallel.ts";
+import { failureSite, scriptOutcome, selectBrowserScripts, serialBrowserScripts } from "./ci-browser-parallel.ts";
 
 const pages = readFileSync(new URL("../.github/workflows/pages.yml", import.meta.url), "utf8");
 const ci = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+
+describe("Browser failure sites", () => {
+  it("returns no failure for PASS lines", () => {
+    expect(failureSite("PASS scripts/ui-regression.ts\nPASS all checks")).toEqual({ site: null, message: null });
+  });
+  it("reads the first assertion frame after the error", () => {
+    const log = `65 | assert(Date.now() < deadline, "input regression timed out");
+                                    ^
+AssertionError: input regression timed out
+ generatedMessage: false,
+      at /w/herdr-web-ui/herdr-web-ui/scripts/terminal-input-regression.ts:65:32
+      at checkTerminalInput (/w/herdr-web-ui/herdr-web-ui/scripts/terminal-input-regression.ts:81:11)`;
+    expect(failureSite(log)).toEqual({ site: "scripts/terminal-input-regression.ts:65", message: "AssertionError: input regression timed out" });
+  });
+  it("skips Playwright frames for the first script frame", () => {
+    const log = `  TimeoutError: waitFor: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator('.prompt-card') to be detached
+      at /w/herdr-web-ui/herdr-web-ui/node_modules/playwright-core/lib/coreBundle.js:57694:13
+      at checkSplitView (/w/herdr-web-ui/herdr-web-ui/scripts/split-view-regression.ts:509:13)`;
+    expect(failureSite(log)).toEqual({ site: "scripts/split-view-regression.ts:509", message: "TimeoutError: waitFor: Timeout 30000ms exceeded." });
+  });
+  it("keeps an error with no script frame", () => {
+    expect(failureSite("TypeError: broken\n  at /tmp/node_modules/scripts/helper.ts:2:1")).toEqual({ site: null, message: "TypeError: broken" });
+  });
+});
 
 function indentedSection(source: string, parent: string, name: string, indent: number): string {
   const lines = source.split("\n");
@@ -120,6 +146,13 @@ describe("Browser lane script lists", () => {
     const all = shards.flat();
     expect(all.length).toBe(serial.length);
     expect([...all].sort()).toEqual([...serial].sort());
+  });
+
+  it("calls a script that passed only on its second run flaky, and one that failed again a failure", () => {
+    expect(scriptOutcome(0, false)).toBe("pass");
+    expect(scriptOutcome(0, true)).toBe("flaky");
+    expect(scriptOutcome(1, true)).toBe("fail");
+    expect(scriptOutcome(1, false)).toBe("fail");
   });
 
   it("refuses a script name the serial lane does not run", () => {

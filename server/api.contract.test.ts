@@ -707,6 +707,9 @@ describe("tab rename and close", () => {
       expect(res.status).toBe(400);
       expect(((await res.json()) as ApiError).error.code).toBe("missing_label");
     }
+    const long = await post("rename", { tab_id: "unknown:t9", label: "T".repeat(81) });
+    expect(long.status).toBe(400);
+    expect(((await long.json()) as ApiError).error.code).toBe("label_too_long");
   });
 
   it("renames a tab, closes one beside another, and takes the workspace with its last tab", async () => {
@@ -904,6 +907,7 @@ describe("tab creation", () => {
       [{ cwd: join(tmpdir(), crypto.randomUUID()) }, "invalid_cwd"],
       [{ cwd: 42 }, "invalid_cwd"],
       [{ label: false }, "missing_label"],
+      [{ label: "T".repeat(81) }, "label_too_long"],
       [{ agent: {} }, "invalid_agent"],
       [{ agent: { kind: "muse", args: "--help" } }, "invalid_agent"],
     ] as const) {
@@ -1095,8 +1099,10 @@ describe("workspace and discovery endpoints", () => {
       expect((await kinds()).map((agent) => agent.kind)).not.toContain("gjc");
       for (const name of ["omo", "gjc"]) writeFileSync(join(bin, name), "#!/bin/sh\n", { mode: 0o755 });
       const offered = await kinds();
-      expect(offered).toContainEqual({ kind: "omo", label: "OmO" });
-      expect(offered).toContainEqual({ kind: "gjc", label: "Gajae Code" });
+      expect(offered).toContainEqual({ kind: "omo", label: "OmO", installed: true });
+      expect(offered).toContainEqual({ kind: "gjc", label: "Gajae Code", installed: true });
+      // claude is always listed, and said to be missing where its command is not on PATH
+      expect(offered).toContainEqual({ kind: "claude", label: "Claude Code", installed: false });
     } finally {
       process.env["PATH"] = path;
       rmSync(bin, { recursive: true, force: true });
@@ -1161,6 +1167,48 @@ describe("workspace and discovery endpoints", () => {
     expect(close.status).toBe(200);
     expect(await close.json()).toEqual({ ok: true });
     workspaceId = null;
+  }, 20_000);
+
+  it("pushes session-changed when POST /api/workspace/close answers, not after the collector's debounce", async () => {
+    const closing = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-close-push" });
+    const socket = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      // the creation's own frame, debounced, is not the close's
+      await socket.waitFor((frame) => frame.type === "session-changed", "session-changed after create", 5_000);
+      const before = new Set(socket.seen);
+      const changed = socket.waitFor((frame) => frame.type === "session-changed" && !before.has(frame), "session-changed after close", 5_000).then(() => performance.now());
+      const response = await fetch(`${base()}/api/workspace/close`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspace_id: closing.workspace.workspace_id }),
+      });
+      const answered = performance.now();
+      expect(response.status).toBe(200);
+      expect(await changed - answered).toBeLessThan(250);
+    } finally {
+      socket.close();
+      await herdrRpc("workspace.close", { workspace_id: closing.workspace.workspace_id }).catch(() => undefined);
+    }
+  }, 20_000);
+
+  it("says a repository has no commits yet instead of passing git's refusal on", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "herdr-web-ui-worktree-empty-"));
+    expect(Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: repo, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0);
+    const parent = await workspaceCreate({ cwd: repo, label: "herdr-web-ui-test-worktree-empty" });
+    const checkout = join(`${repo}-checkouts`, "feature");
+    try {
+      const create = await fetch(`${base()}/api/worktree/create`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspace_id: parent.workspace.workspace_id, branch: "herdr-web-ui-test-unborn", path: checkout }),
+      });
+      expect(create.status).toBe(409);
+      expect(((await create.json()) as ApiError).error.code).toBe("repository_without_commits");
+      expect(existsSync(checkout)).toBeFalse();
+    } finally {
+      await herdrRpc("workspace.close", { workspace_id: parent.workspace.workspace_id }).catch(() => undefined);
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(`${repo}-checkouts`, { recursive: true, force: true });
+    }
   }, 20_000);
 
   it("creates a worktree of an owned repository as a grouped workspace, lists it, and opens it again", async () => {
@@ -1333,6 +1381,12 @@ describe("workspace and discovery endpoints", () => {
   it("uses the shared error envelope for malformed mutation bodies", async () => {
     for (const [path, body, code] of [
       ["/api/workspace/rename", {}, "missing_workspace_id"],
+      // #927: herdr would keep a blank or any-length name
+      ["/api/workspace/rename", { workspace_id: "x", label: "" }, "missing_label"],
+      ["/api/workspace/rename", { workspace_id: "x", label: "   " }, "missing_label"],
+      ["/api/workspace/rename", { workspace_id: "x", label: "W".repeat(81) }, "label_too_long"],
+      ["/api/worktree/create", { workspace_id: "x", branch: "b", label: "W".repeat(81) }, "label_too_long"],
+      ["/api/worktree/open", { workspace_id: "x", path: "/tmp", label: "W".repeat(81) }, "label_too_long"],
       ["/api/workspace/move", { workspace_id: "x", insert_index: -1 }, "invalid_index"],
       ["/api/workspace/close", {}, "missing_workspace_id"],
       ["/api/pane/rename", {}, "missing_pane_id"],

@@ -7,7 +7,7 @@ import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
 import { pageScrollDistance } from "../lib/pageScroll.ts";
-import { offsetAtThumb, scrollThumb, validScroll, visibleFindRects, type FindCellRect } from "../lib/terminalViewport.ts";
+import { offsetAtThumb, scrollPollDelay, scrollThumb, validScroll, visibleFindRects, type FindCellRect } from "../lib/terminalViewport.ts";
 import "./TerminalViewportTools.css";
 
 export interface TerminalSearchState { query: string; result: PaneFindResponse }
@@ -60,6 +60,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     let writing = false;
     let desired: number | null = null;
     let dirty = false;
+    // metrics reads in a row with nothing in between that could move them: the poll backs off
+    let idle = 0;
     let version = 0;
     let outputVersion = 0;
     // the output the current metrics were read after: a program leaving its alternate screen hands the
@@ -72,16 +74,27 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     const showing = () => document.visibilityState !== "hidden" && !!terminal.element?.getClientRects().length
       && getComputedStyle(terminal.element).visibility !== "hidden";
     const clearHits = () => { data = null; lastKey = ""; setHits((old) => old.length ? [] : old); };
-    const paint = () => {
+    const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? null;
+    /** Box geometry: only a resize, a mount scroll or a refresh moves it, never a rendered frame. */
+    const paintBox = () => {
       if (!alive || !showing()) return;
-      const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen");
       const parent = layer.current?.parentElement;
       if (!screen || !parent) return;
       const rect = screen.getBoundingClientRect(), outer = parent.getBoundingClientRect();
       const next = { left: rect.left - outer.left, top: rect.top - outer.top, width: rect.width, height: rect.height, cols: terminal.cols, rows: terminal.rows,
         trackTop: Math.max(rect.top, outer.top) - outer.top, trackHeight: Math.max(0, Math.min(rect.bottom, outer.bottom) - Math.max(rect.top, outer.top)) };
       setBox((old) => old && Object.keys(next).every((key) => old[key as keyof Box] === next[key as keyof Box]) ? old : next);
+    };
+    /** Find rectangles: the cells under them change with every frame, so this runs on render, and
+     * reads nothing from the layout unless a search has a result to place. */
+    const paintHits = () => {
+      if (!alive) return;
       const active = searchRef.current;
+      if (!active || !data) {
+        if (lastKey !== "[]") { lastKey = "[]"; setHits((old) => old.length ? [] : old); }
+        return;
+      }
+      if (!showing()) return;
       const matches = data?.matches ?? [];
       const nativeScroll = data?.scroll;
       // A newer native window revalidates the same range before it can stay current;
@@ -95,6 +108,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       const key = JSON.stringify(rectangles);
       if (key !== lastKey) { lastKey = key; setHits((old) => old.length === 0 && rectangles.length === 0 ? old : rectangles); }
     };
+    const paint = () => { paintBox(); paintHits(); };
     const schedule = (delay = 250) => {
       if (!alive || document.visibilityState === "hidden") return;
       const due = Date.now() + delay;
@@ -106,7 +120,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     const read = async () => {
       if (!alive) return;
       if (pending || writing) { dirty = true; return; }
-      if (!showing()) { schedule(1000); return; }
+      if (!showing()) { idle = 0; schedule(1000); return; }
       pending = true; dirty = false;
       const revision = version;
       const output = outputVersion;
@@ -120,8 +134,14 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
         const metrics = found?.scroll ?? await api.fetchPaneScroll(paneId);
         if (!alive || revision !== version || cols !== terminal.cols || rows !== terminal.rows) return;
         setScroll((old) => validScroll(metrics) ? old && old.offset_from_bottom === metrics.offset_from_bottom && old.max_offset_from_bottom === metrics.max_offset_from_bottom && old.viewport_rows === metrics.viewport_rows ? old : metrics : null);
-        if (validScroll(metrics)) { scrollRef.current = metrics; metricsOutput = output; }
+        if (validScroll(metrics)) {
+          // metrics that moved without output (another client, history growing under a held view) mean the pane is not idle
+          const last = scrollRef.current;
+          if (last && (last.offset_from_bottom !== metrics.offset_from_bottom || last.max_offset_from_bottom !== metrics.max_offset_from_bottom)) idle = 0;
+          scrollRef.current = metrics; metricsOutput = output;
+        }
         data = output === outputVersion ? found : null;
+        // also the box: a pane shown again by its visibility style, not its size, gets no ResizeObserver call
         paint();
         // a page held on stale metrics runs on the first read after the latest output, while it is recent
         if (heldPage && output === outputVersion) {
@@ -130,13 +150,15 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
           if (Date.now() - held.at < HELD_PAGE_MS) scrollPage(held.direction);
         }
       } catch {
-        if (alive && revision === version) { clearHits(); if (!query) setScroll(null); }
+        // a failed read retries on the first step, not the idle backoff: the scrollbar and page keys wait on it
+        if (alive && revision === version) { clearHits(); if (!query) setScroll(null); idle = 0; }
       } finally {
         pending = false;
-        if (alive) schedule(dirty ? 250 : 1000);
+        // an idle pane at the bottom backs off; output, a scroll, a resize, moved metrics or coming back into view resets it
+        if (alive) schedule(scrollPollDelay(dirty, idle++, scrollRef.current));
       }
     };
-    const wake = () => { dirty = true; schedule(); };
+    const wake = () => { dirty = true; idle = 0; schedule(); };
     const flush = async () => {
       if (writing || desired === null || !alive || viewportIntent.isSearching()) return;
       writing = true;
@@ -181,6 +203,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
         return;
       }
       if (validScroll(metrics)) writeRef.current((previewRef.current ?? metrics.offset_from_bottom) - direction * pageScrollDistance(metrics.viewport_rows, 1, overlapRef.current));
+      // no metrics (a failed read): ask for a fresh read now rather than at the next poll
+      else { dirty = true; idle = 0; schedule(0); }
     };
     if (pageScroll) pageScroll.current = scrollPage;
     const unregisterCancellation = viewportIntent.registerScrollCancellation(() => {
@@ -188,9 +212,9 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       previewRef.current = null;
       setPreview(null); clearHits();
     });
-    refreshRef.current = () => { dirty = true; paint(); schedule(0); };
+    refreshRef.current = () => { dirty = true; idle = 0; paint(); schedule(0); };
     const parsed = terminal.onWriteParsed(() => { outputVersion++; clearHits(); wake(); });
-    const rendered = terminal.onRender(paint);
+    const rendered = terminal.onRender(paintHits);
     const resized = terminal.onResize(() => { version++; clearHits(); setScroll(null); wake(); paint(); });
     const visibility = () => {
       if (document.visibilityState === "hidden") { if (timer !== null) clearTimeout(timer); timer = null; clearHits(); }
@@ -198,6 +222,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     };
     const observer = new ResizeObserver(() => { paint(); wake(); });
     if (layer.current?.parentElement) observer.observe(layer.current.parentElement);
+    // the screen's own size follows the renderer's cell metrics (a font load, a zoom), not only the mount
+    if (screen) observer.observe(screen);
     const mount = terminal.element?.parentElement;
     mount?.addEventListener("scroll", paint, { passive: true });
     document.addEventListener("visibilitychange", visibility);

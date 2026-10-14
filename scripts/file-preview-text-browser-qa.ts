@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { build as viteBuild } from "vite";
 import { serveStatic } from "../server/static.ts";
+import { chromePath } from "./chrome-path.ts";
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-text-preview-")));
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -35,7 +36,7 @@ try {
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
     return new Response(Bun.file(join(output, url.pathname === "/" ? "index.html" : url.pathname.slice(1))), { headers: { "content-security-policy": policy } });
   } });
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage(); page.setDefaultTimeout(10_000);
   await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
   const errors: string[] = [], cancelled: string[] = [];

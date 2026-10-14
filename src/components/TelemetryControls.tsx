@@ -9,15 +9,14 @@ import { SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
 /**
  * The one-time line about anonymous install and update counts. Showing it is what lets the
  * server send (shared/telemetry.ts), so it is recorded once it has been painted in a visible
- * tab, and the server still waits a while before the first event so Turn off here stops it.
+ * tab, and the server still waits a while before the first event so the switch behind What is sent
+ * stops it. It stays one line on any width; Settings says what is sent in full.
  * Closing it only hides it in this tab.
  */
 export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen: () => void }) {
   const t = useT();
   const [shown, setShown] = useState(false);
   const [closed, setClosed] = useState(false);
-  const [turningOff, setTurningOff] = useState(false);
-  const [offFailed, setOffFailed] = useState(false);
   // The server keeps this browser's latest safe settings snapshot for its next count. The snapshot
   // contains no raw user-entered values or account identifiers.
   const { settings } = useSettings();
@@ -74,20 +73,10 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
     return () => { recorded = true; cancelAnimationFrame(frame); document.removeEventListener("visibilitychange", onVisibility); };
   }, [shown]);
   if (!shown || closed) return null;
-  const turnOff = () => {
-    setTurningOff(true);
-    setOffFailed(false);
-    // the line stays until the server has the switch off, so a failure is seen and can be retried
-    changeTelemetry({ enabled: false }).then((next) => { setStatus(next); setClosed(true); }, (error: unknown) => {
-      console.error("telemetry off", error);
-      setOffFailed(true);
-    }).finally(() => setTurningOff(false));
-  };
-  return <div className="update-notice" role="status">
-    <span>{t("herdr web ui sends install and update counts with the version, OS, a random ID and app settings such as theme, text size and notification choices. Custom text and account identifiers are excluded. The receiver also notes the country, never the address.")}</span>
-    {offFailed && <span role="alert">{t("Could not turn it off. Try again.")}</span>}
+  const text = t("herdr web ui sends anonymous install and update counts.");
+  return <div className="update-notice is-line" role="status">
+    <span title={text}>{text}</span>
     <button type="button" className="btn btn-ghost" onClick={() => { setClosed(true); onOpen(); }}>{t("What is sent")}</button>
-    <button type="button" className="btn btn-ghost" onClick={turnOff} disabled={turningOff}>{t("Turn off")}</button>
     <button type="button" className="btn btn-ghost" onClick={() => setClosed(true)}>{t("Dismiss")}</button>
   </div>;
 }

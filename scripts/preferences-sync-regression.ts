@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
+import { chromePath } from "./chrome-path.ts";
 
 await import("./test-herdr.ts");
 const { createServer } = await import("../server/index.ts");
@@ -53,7 +54,7 @@ const held = async () => await (await fetch(`${origin}/api/preferences`)).json()
 const write = (page: Page, body: object) => page.evaluate(async (body) => (await fetch("/api/preferences", { method: "PUT", headers: { "content-type": "application/json" }, body })).status, JSON.stringify(body));
 
 try {
-  const browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   try {
     // A has pinned an agent before this release; B has not. The pane need not exist here: a pin of a
     // pane this page cannot see stays in the list (a PC still loading would look the same)

@@ -268,7 +268,21 @@
     justify-content: flex-end;
   }
 
-  .file-reader-header {
+  /* the reader's page: a reload line (ChunkFailureNotice) above the document when a part failed to load */
+.file-reader-frame {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.file-reader-frame > .file-reader {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+.file-reader-header {
     grid-template-areas: "title title" "actions actions";
   }
 }

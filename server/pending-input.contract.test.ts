@@ -579,7 +579,8 @@ describe("connection-owned pending input", () => {
     const first = await f.queue(1, "first"); const second = await f.queue(2, "held second");
     await f.state("idle"); await f.removed(first.id);
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: PendingMessage) => item.id === second.id && item.state === "held" && item.error?.code === "pending_turn_unconfirmed"));
-    expect(f.bytes()).toBe(`${paste("first")}\r`);
+    // the bridge's Enter has gone to herdr, but the recorder in the pane may not have logged it yet
+    await f.waitBytes("\r"); expect(f.bytes()).toBe(`${paste("first")}\r`);
   }, 30_000);
 
   it("rejects ordinary queue input and Send now at a visible password prompt despite a working state", async () => {

@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { Database } from "bun:sqlite";
 import { chromium, type CDPSession } from "playwright-core";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const repo = resolve(import.meta.dir, "..");
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pwa-"));
@@ -135,7 +136,7 @@ try {
   const application: typeof import("../server/index.ts") = await import(pathToFileURL(join(app, "server", "index.ts")).href);
   server = application.createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), codexHome });
   const origin = `http://127.0.0.1:${server.port}`;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
 
   for (const width of [1440, 390]) {
     cpSync(baseline, join(app, "dist"), { recursive: true });

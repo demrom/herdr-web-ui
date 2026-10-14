@@ -64,7 +64,7 @@ export const SCROLL_CONFIG = { overscrollSize: 600, intersectionObserverMargin: 
  * The highlighter runs in the package's own worker, never on the page: the whole file is colored
  * at once, and 8 MiB of it measured 54 s of blocked page without one. Two workers color one file
  * at a time; the pool is created with the first virtualized source (plain rows use its manager's
- * windowed rows) or colored diff, and ended after the last. Its two
+ * windowed rows) or diff, and ended after the last. Its two
  * result caches (files, diffs) hold 12 entries each, not the package's 100: one colored file can
  * be megabytes of heap, and stepping through a repository's changes keeps the pool alive.
  */

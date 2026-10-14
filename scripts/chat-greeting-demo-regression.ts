@@ -6,6 +6,7 @@ import { chromium, type Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // An empty chat's greeting, on the unmodified app over the demo's fixture transport: a workspace
 // the demo creates starts with a conversation of no turns. All files and HTTP traffic stay in
@@ -108,7 +109,7 @@ try {
   const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.infra)}`;
   const settings = (): void => { localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })); };
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       // a mouse-driven window: the greeting and the input card sit at the pane's vertical centre
       const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });

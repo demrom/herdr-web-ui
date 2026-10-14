@@ -783,6 +783,14 @@ body,
   margin: 0;
 }
 
+/* No pull-to-refresh: a reload drops held drafts and the terminal client. Chrome before 144
+   ignores a container's overscroll-behavior when it has nothing to scroll (a short chat), so the
+   drag chains to the page; there it takes both html and body, html alone still reloads (#427). */
+html,
+body {
+  overscroll-behavior-y: contain;
+}
+
 body {
   background: var(--bg);
   color: var(--text);

@@ -113,7 +113,7 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     });
 
     await page.goto(origin);
-    const notice = page.locator(".update-notice").filter({ hasText: "herdr web ui sends install and update counts" }).first();
+    const notice = page.locator(".update-notice").filter({ hasText: "herdr web ui sends anonymous install and update counts" }).first();
     await notice.waitFor({ state: "visible" });
     await until(async () => (await statusAt(origin)).notice_seen, "the visible notice is reacknowledged");
     assert.ok(changes.some((change) => change.notice_seen === true && change.notice_version === NOTICE_VERSION), "the browser acknowledges exactly the current notice version");
@@ -164,9 +164,13 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     await telemetrySection.locator("summary").click();
     const updatedPreview = JSON.parse(await preview.innerText()) as TelemetryEvent;
     assert.equal(updatedPreview.settings?.palette, "lilac", "the preview refreshes with the server's updated snapshot");
+    assert.equal(await notice.getByRole("button").count(), 2, "the line offers What is sent and Dismiss, nothing else");
+    const rows = await notice.locator("span").evaluate((span) => span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight));
+    assert.ok(rows < 1.5, `the sentence stays on one row (${rows} rows)`);
+    await telemetrySection.getByRole("switch", { name: "Send install and update counts", exact: true }).click();
+    await until(async () => !(await statusAt(origin)).enabled, "the Settings switch cancels the pending event");
     await dialog.getByRole("button", { name: "Close settings", exact: true }).click();
-    await notice.getByRole("button", { name: "Turn off", exact: true }).click();
-    await until(async () => !(await statusAt(origin)).enabled, "Turn off cancels the pending event");
+    await notice.getByRole("button", { name: "Dismiss", exact: true }).click();
     await notice.waitFor({ state: "hidden" });
     fixtureNow += SEND_GRACE_MS + 1;
     await telemetry.report();

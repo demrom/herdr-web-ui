@@ -109,8 +109,6 @@
   fonts.
 - **Settings → Appearance → Typography** sets the interface font and size and the code font on this
   device, apart from the terminal's and the chat's own.
-- Chat: the composer can save drafts aside per pane (bookmark button beside Attach), then restore or
-  delete them later; nothing saved is ever sent on its own.
 - Chat work blocks list the files their edit tools changed in the turn, and a click opens the file's
   current working-tree diff.
 - Coming back to a pane's chat puts you on the same turn and offset you left, or at the end if you

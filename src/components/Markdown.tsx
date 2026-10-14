@@ -13,6 +13,7 @@ import { imageSlotStyle, standaloneImage } from "../lib/imageBox.ts";
 import { formatBytes } from "../lib/bridgeProgress.ts";
 import { MermaidLightbox } from "./MermaidLightbox.tsx";
 import { copyText } from "../lib/clipboard.ts";
+import { lazyChunk } from "../lib/lazyChunk.ts";
 import type { SkillMatcher } from "../lib/skillMentions.ts";
 import { previewChunks } from "../lib/textPreview.ts";
 
@@ -22,15 +23,13 @@ const SkillMatcherContext = createContext<SkillMatcher | null>(null);
 type Katex = typeof import("katex").default;
 /** KaTeX is a fifth of the app's script: the first expression loads it (lib/katex.ts), and every later one has it at once. */
 let katexModule: Katex | null = null;
-let katexLoad: Promise<Katex> | null = null;
 
-/** KaTeX, fetched once; a static render (the unit test) waits on it to draw math as the chat does. */
-export function loadKatex(): Promise<Katex> {
-  // offline before it was ever fetched: every expression stays in its source form until a reload
-  // (no retry: Chrome keeps a failed import's answer for the page's life without fetching again)
-  katexLoad ??= import("../lib/katex.ts").then((module) => (katexModule = module.default));
-  return katexLoad;
-}
+/**
+ * KaTeX, fetched once; a static render (the unit test) waits on it to draw math as the chat does.
+ * Offline before it was ever fetched, or in a tab older than the server's build, every expression
+ * stays in its source form and the app offers a reload (lib/lazyChunk.ts).
+ */
+export const loadKatex: () => Promise<Katex> = lazyChunk(() => import("../lib/katex.ts").then((module) => (katexModule = module.default)));
 
 function useKatex(): Katex | null {
   const [katex, setKatex] = useState(katexModule);
@@ -61,13 +60,9 @@ function MathExpression({ value, displayMode = false }: { value: string; display
 }
 
 type MermaidRender = typeof import("../lib/mermaid.ts").renderMermaid;
-let mermaidLoad: Promise<MermaidRender> | null = null;
 
-/** Mermaid, fetched once with the first diagram (lib/mermaid.ts); offline before that, a diagram stays a code block. */
-function loadMermaid(): Promise<MermaidRender> {
-  mermaidLoad ??= import("../lib/mermaid.ts").then((module) => module.renderMermaid);
-  return mermaidLoad;
-}
+/** Mermaid, fetched once with the first diagram (lib/mermaid.ts); one that cannot load leaves diagrams as code blocks until a reload. */
+const loadMermaid: () => Promise<MermaidRender> = lazyChunk(() => import("../lib/mermaid.ts").then((module) => module.renderMermaid));
 
 /** Whether the page is drawn dark (`data-theme` on <html>, which Settings keeps current). */
 function useDarkTheme(): boolean {

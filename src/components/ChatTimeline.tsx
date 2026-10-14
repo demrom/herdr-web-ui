@@ -3,7 +3,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 import { ChatRowMemoryContext, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { chatMarkdownClipboardPayload } from "../lib/markdownClipboard.ts";
-import "./ChatTimeline.css";
+// ChatTimeline.css is imported by ChatView: the frame and the loading state need it before this chunk
 
 export interface ChatTimelineRow {
   readonly key: string;

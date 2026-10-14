@@ -90,7 +90,7 @@ bun run start
 
 </details>
 
-**2. Open it** at **http://localhost:7317**. Every workspace of your herdr session is a row in the sidebar, as in herdr's own; its tabs are always shown in a strip, and the active tab shows all its split panes together. Pick one, start a new agent with **New workspace**, or add a tab to a workspace with **New tab** (the tab's menu, the header button, or the strip's `+`). Right-click a tab to rename or close it; on a phone, tap the selected tab’s **⋯** for the same menu. A focused tab also opens its menu with Shift+F10, and double-click still renames it.
+**2. Open it** at **http://localhost:7317**. Every workspace of your herdr session is a row in the sidebar, as in herdr's own, led by its project's favicon when its folder keeps one (`favicon.svg`, `.ico` or `.png`, directly in the folder or in its `public/`; the folder is the worktree checkout, or else the pane's working folder, so a pane that has `cd`'d into `src/` looks there) and a folder glyph otherwise (a repository row with worktrees under it keeps its fold button, and the worktree rows nested under it have no mark); its tabs are always shown in a strip, and the active tab shows all its split panes together. Pick one, start a new agent with **New workspace**, or add a tab to a workspace with **New tab** (the tab's menu, the header button, or the strip's `+`). Right-click a tab to rename or close it; on a phone, tap the selected tab’s **⋯** for the same menu. A focused tab also opens its menu with Shift+F10, and double-click still renames it.
 
 Drag a tab to change its order within the workspace, or choose **Move tab left / right** from
 its menu (also on a phone). Alt+Shift+Left/Right moves a focused tab. Reordering keeps the
@@ -147,7 +147,7 @@ Every agent herdr runs shows up with its live status, terminal and alerts. The c
 | **Codex** | Native rollout, with tool results and commentary/final phases | ✓ approvals and questions, including queued ones, and the `/model` lists (picked for the session) |
 | **omp** | Native session file | ✓ |
 | **omo** | Native session file, found through the pane's process tree | — use Terminal |
-| **gjc** | Native session file, from the session directory gjc keeps open | — use Terminal |
+| **gjc** | Native session file identified by GJC's SDK broker and the pane's process | — use Terminal |
 | **pi** | Native session file, resolved through herdr; after `/tree`, the branch in play | ✓ its dialogs: a question, a confirmation, an answer typed in |
 | **OpenCode** | Native session in OpenCode 2's own database, resolved through herdr: `~/.local/share/opencode/opencode.db` (`%USERPROFILE%\.local\share\opencode\opencode.db` on Windows), or where the server's `XDG_DATA_HOME` or `OPENCODE_DB` puts it | — use Terminal |
 | **Devin CLI** | Native SQLite session, showing the active branch when herdr or the live process explicitly identifies the session; otherwise terminal text | — use Terminal |
@@ -155,6 +155,14 @@ Every agent herdr runs shows up with its live status, terminal and alerts. The c
 | **Hermes** | Native SQLite session store | — use Terminal |
 | **Antigravity (agy)** | **Experimental; macOS untested.** Native ledger, selected by the running process’s held conversation lock. Linux native-tested; Windows uses terminal text. See [Agy behavior and limits](agy-chat.md). | — use Terminal |
 | **Anything else** | The terminal's text | — use Terminal |
+
+GJC chat requires GJC 0.18.9 or later for its broker-bound SDK session CLI, with `gjc`
+on the server PC's PATH and its SDK broker already running. An older GJC opens in Terminal.
+Git must also be on PATH for the SDK's workspace-scope discovery.
+The bridge asks the broker which saved session belongs to the pane's GJC process;
+it does not start a broker or guess from the screen, session title or newest file.
+Missing, ambiguous or unreadable SDK identity uses Terminal instead. Terminal input,
+status tracking and prompt handling are unchanged.
 
 Devin sessions are never selected by directory or recency alone. A plain `devin` shows the
 terminal text, since herdr does not report its session without its Devin integration; a session
@@ -187,19 +195,21 @@ A pane's plan is the task list a Claude Code agent keeps (`TaskCreate` / `TaskUp
 
 | | |
 | --- | --- |
-| **Read the conversation** | Prompts and Markdown answers (links, code blocks, tables). Each turn's commands, edits and progress are folded into one "Worked for …" block. Copy an answer as Markdown or plain text. In a pi pane, a picture the agent's own tool opened shows inside that tool's row. |
+| **Read the conversation** | Prompts and Markdown answers (links, code blocks, tables). Each turn's commands, edits and progress are folded into one "Worked for …" block. Copy an answer as Markdown or plain text. In a pi pane, a picture the agent's own tool opened shows inside that tool's row. A picture opens in a full-screen viewer: zoom at the pointer, pan, step through the message's other pictures, **Copy image** and **Download**. Skill names an answer writes (`/name`, or `$name` for Codex) show as chips when the pane's own command list names that skill. Once you have sent four or more messages, a rail of dashes at the left, one per message you sent, jumps between them (not on a phone, or when the chat column leaves less than 32 px of margin at each side). |
+| **Find in chat** | In an agent's native chat, the **Find in messages** button, or Mod+F while that chat shows in the active pane, finds literal text in the loaded conversation, folded work and tool output included, with **Match case**, a match count and previous/next. Enter in the field steps forward, Shift+Enter back, Escape closes; **Search earlier messages** loads older pages until one matches (**Cancel search** stops it). |
 | **Follow the plan** | A supported todo-tool call folds into the turn's work block like any tool: it reads as the done count or the step it took, and opened, as the whole list by phase. |
-| **Drop into the real terminal** | xterm.js on the live pane: full-screen TUIs, raw keys and herdr's scrollback, shared with your own herdr TUI. Drag to select and it is copied on release; the wheel or the screen's edge scrolls further back while you drag. Ctrl+C copies a selection instead of interrupting. |
+| **Drop into the real terminal** | xterm.js on the live pane: full-screen TUIs, raw keys and herdr's scrollback, shared with your own herdr TUI. Drag to select and it is copied on release; the wheel or the screen's edge scrolls further back while you drag. Ctrl+C copies a selection instead of interrupting. **Quote in message**, shown while text is selected, adds the selection to that pane's chat draft in a code block headed by the pane name, and its line numbers when herdr reports them; nothing is sent. |
 | **Find in terminal** | **More → Find in terminal** or Mod+Shift+F searches literal text in herdr's history, with a match count, previous/next navigation and visible match highlights. Drag the terminal scrollbar or focus it and use arrows, Page Up/Down, Home or End. Search jumps and scrolling move the same viewport in every attached client, including the TUI. Older bridges retain search navigation without automatic highlights; read-only views cannot move the scrollbar. |
-| **Jump across PCs** | The command palette (Mod+Shift+K) searches all connected PCs at once by PC, workspace, branch, tab, pane title or agent kind. PC names distinguish results, and Recent remembers each pane's PC. Picking a result opens that PC and pane directly. Disconnected PCs are omitted; app and plugin actions remain on the currently selected PC. |
+| **Jump across PCs** | The command palette (Mod+Shift+K) searches all connected PCs at once by PC, workspace, branch, tab, pane title or agent kind. PC names distinguish results, and Recent remembers each pane's PC. Picking a result opens that PC and pane directly. Disconnected PCs are omitted; app and plugin actions remain on the currently selected PC. It also finds Settings pages and actions by related words (try `theme` or `font`), and browses folders: type a path such as `~/`, or pick **Browse folders**, and the folder you reach opens in Files. |
 | **Answer prompts** | Approval, question and plan menus become cards. Tap an option, or type its number in the composer. The server checks that the menu is still current before answering. |
-| **Compose** | `/` commands and `@` file mentions, any file or image up to 8 MB attached by path, and a draft per pane. Send during work schedules a next-turn message; use its ↑ Send now action to send it now. |
+| **Compose** | `/` commands and `@` file mentions, any file or image up to 8 MB attached by path, and a draft per pane. Send during work schedules a next-turn message; use its ↑ Send now action to send it now. A strip under the input card names the pane's working folder (the whole path on hover) and, for a workspace of a repository with a worktree open, its branch at the other end. |
 | **Follow every agent** | Live RUN / INPUT / DONE / READY status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
-| **Open what agents make** | A file path in an answer opens in a viewer (images, video, audio, PDF, text), or find it with **Browse files**, and download it to your phone. |
+| **Open what agents make** | A file path in an answer opens in a viewer (images, video, audio, PDF, text), or find it with **Browse files**, and download it to your phone. A source file opens whole up to 8 MB and 200,000 lines; past 2,000 lines it scrolls as a window of rows, colored up to 256 KB and 5,000 lines and plain beyond. A link with `:line` or `#L12` opens at that line. |
+| **See what changed** | **Browse files → Changes** lists what changed in the git repository the pane sits in: the **Working tree**, what is **Staged**, or two **Commits** you name, as a folder tree with git's status letter and the added and removed lines. A row opens its diff, **Unified** or **Split** (Settings → Chat → File viewer → Diff layout; a phone shows one column), with **Copy path**, **Copy patch** and **Open file**. The files a turn's edit tools changed, listed in its work block, open the same diff. It only reads; a remote PC's repository is read on that PC. |
 | **Manage sessions** | Start an agent in a folder you type or pick with **Browse**. In New workspace, Browse filters the currently loaded folders as you type (case-insensitive); open a result, then choose **Use this folder**. It does not search subfolders or folders beyond the displayed 500. Add a tab to a workspace (as herdr's prefix+c), switch tabs from the strip over the pane, rename workspaces from their ⋯/right-click menu and panes from their own menu, move a pane through header More → Move pane to…, reorder workspaces (drag a row, or on a phone long-press it and drag; Alt+Up/Down moves a focused row one step), and jump anywhere from the command palette. |
 | **Speak instead of typing** | A mic beside Attach in the composer and beside Send in the terminal input line. Hold to talk or tap twice; the words land at the caret and are never sent by themselves. See [Voice input](#voice-input). |
 | **Watch your plan limits** | Beside Settings, how much of each AI subscription signed in on the PC is used, or what is left: the week's or the session's limit per account, and every limit with its reset time on a tap. See [Subscription usage](#subscription-usage). |
-| **Make it yours** | English, Korean, Japanese, Simplified Chinese or Turkish, following the browser or chosen in Settings. Dark, light or system theme, compact density, terminal and chat font sizes, a resizable composer, Enter behavior and thinking visibility. |
+| **Make it yours** | English, Korean, Japanese, Simplified Chinese or Turkish, following the browser or chosen in Settings. Dark, light or system theme (with separate Light and Dark palettes under System), contrast, text smoothing, panel motion, compact density, interface, code, terminal and chat fonts and sizes (Chromium lists the installed fonts to pick from), a resizable composer, Enter behavior and thinking visibility. |
 
 Every agent has the same chat controls on desktop and phones: Stop while it works with an empty
 draft, Send when you type, and Send at rest. With a draft in the box, Escape stops the agent. Sending during work adds a message bubble above the
@@ -423,7 +433,7 @@ If `devices.json` under `HERDR_WEB_STATE_DIR` (default `~/.config/herdr-web-ui`)
 
 Nothing is typed without you:
 - Input typed while disconnected waits as a draft for you to send or discard.
-- On a current bridge, a message sent while the agent works goes to its next turn on its own, but only while the connection that sent it stays open and still holds the pane: losing either cancels it, even if the connection rejoins later. A reload or reconnect never resumes that: the saved copy of such a message comes back marked not confirmed, to copy or discard after checking the terminal. Other held messages stay with their PC and pane until you choose **Send now** or **Discard**. If the browser cannot save the queue, it says so: keep the tab open or copy the messages before reloading.
+- On a current bridge, a message sent while the agent works goes to its next turn on its own, but only while the connection that sent it stays open and still holds the pane. Switching tabs or workspaces on the same PC keeps that pane attached until its automatic queue settles. Losing the connection or lease cancels delivery, even if the connection rejoins later. A reload or reconnect never resumes that: the saved copy of such a message comes back marked not confirmed, to copy or discard after checking the terminal. Other held messages stay with their PC and pane until you choose **Send now** or **Discard**. If the browser cannot save the queue, it says so: keep the tab open or copy the messages before reloading.
 - A typed answer that picks an option of an approval, plan or menu waits for **Confirm**.
 
 Attaches and reconnects wait when another client holds the terminal. **Open here** on the waiting
@@ -474,7 +484,7 @@ This is for Linux and macOS. On Windows, and for a remote PC, update herdr on th
 
 ## Anonymous usage counts
 
-The app tells its maintainer how many installs there are, which versions they run, which countries the messages come from and which app settings people choose. It sends one message when it is first installed and one each time it runs a new version, never in between. The first time you open the app, a line under the header says so, with **What is sent** and **Turn off**. Nothing is sent before that line has been shown, and the first message waits ten minutes after it, so **Turn off** on that line stops it. An install that saw an older notice sees the expanded-settings notice once more, and sends nothing until then. An existing choice to turn counts off stays off.
+The app tells its maintainer how many installs there are, which versions they run, which countries the messages come from and which app settings people choose. It sends one message when it is first installed and one each time it runs a new version, never in between. The first time you open the app, a line under the header says so, with **What is sent**, which opens **Settings → About** and its switch. Nothing is sent before that line has been shown, and the first message waits ten minutes after it, so turning the switch off there stops it. An install that saw an older notice sees the expanded-settings notice once more, and sends nothing until then. An existing choice to turn counts off stays off.
 
 A message holds the event (`install` or `update`), a random ID made on this PC, the app's version and the version an update replaced, the OS and CPU architecture, how the app was installed (herdr plugin, `bun run start`, or `bun run server`), and an allowlisted `settings` snapshot. The snapshot contains actual choices for appearance, terminal and chat behavior, notifications, language, voice controls, usage-meter display and the file viewer, including defaults. Custom fonts, shortcuts, key-bar layouts and quick replies are represented by customization flags, not their text or key combinations; quick replies and hidden usage accounts also have counts. Account identifiers and ordering, paths, addresses, credentials, commands, terminal content, conversations and files are not collected.
 
@@ -496,10 +506,14 @@ The snapshot is the last one a browser reported to this server, not a list of de
 | `Mod+Shift+↑` / `↓` | Previous / next pane |
 | `Mod+Shift+,` | Settings |
 
-**Settings → Shortcuts** changes the final key of each app binding or turns it off. Settings
+**Settings → Shortcuts** changes the final key of each app binding or turns it off: press
+**Record** on a row, then the new Mod+Shift chord (Escape cancels); a reserved, unbindable or
+already-assigned chord is refused on the row. A search field filters the list. Settings
 are saved in this browser, not on the remote PC. The command palette shows the current bindings
 and omits disabled ones. Reset shortcuts restores the defaults. Hold-to-dictate
-(`Mod+Shift+Space`) remains fixed.
+(`Mod+Shift+Space`) remains fixed, and so does the chat's `Mod+F`: while an agent's native chat
+shows in the active pane, it opens [Find in chat](#features) instead of the browser's own find
+(`Ctrl+F` keeps moving the caret on macOS).
 
 Known browser/OS reservations are marked, but other combinations can also be intercepted by
 your browser, OS or extensions. Installed-app mode may behave differently. While an IME is

@@ -7,6 +7,7 @@ import { chromium } from "playwright-core";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
 import type {} from "./chat-history-fixture.tsx";
 import { parseAgyTranscript } from "../server/agy.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-history-browser-"));
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -35,7 +36,7 @@ try {
     if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   // The fixture follows the browser's language; its text assertions below use English.
   const page = await browser.newPage({ locale: "en-US" });
   page.setDefaultTimeout(10_000);

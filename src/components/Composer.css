@@ -461,7 +461,7 @@
 }
 
 /* the message is the card's first row at its full width; under it one row, ordered as t3code's
-   composer orders its own: the status content (the model group) | add, the stash, the mic and
+   composer orders its own: the status content (the model group) | add, the mic and
    the task chip | the one round Send/Stop button. The attachment strip is its own row above
    both. The three cells of the last row stretch and centre what they hold, so the controls and
    the model share one centre line. The card stands over the strip tucked under it (below), so
@@ -779,6 +779,14 @@
   gap: var(--space-1);
   min-width: 0;
   height: var(--chip-h);
+}
+
+/* a linked worktree says what it is: the folder's name alone reads like any checkout's */
+.composer-strip-kind {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 .composer-strip-branch {

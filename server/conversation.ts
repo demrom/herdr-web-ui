@@ -9,15 +9,15 @@
  * - omp: herdr's agent.get hands us the session jsonl path outright under
  *   ~/.omp/agent/sessions/<cwd-slug>/, or ~/.omp/profiles/<name>/agent/sessions/<cwd-slug>/
  *   for `omp --profile <name>` — same shape of truth, one less hop. When herdr names none, the
- *   pane's omp process does, as gjc's does (omp.ts).
+ *   pane's omp process does (omp.ts).
  * - omo: herdr knows nothing about its store and its label for the pane flips
  *   between `pi` and `claude` as omo spawns model CLIs, so the pane's process
  *   tree routes it and process/session evidence selects a unique transcript
  *   under <its agent dir>/sessions/<cwd-slug>/ (~/.omo/agent unless the process
  *   moved it with OMO_CODING_AGENT_DIR). It writes omp's session shape, so
  *   parseOmpTranscript (transcript-records.ts) reads it.
- * - gjc: an open session file or fresh native terminal breadcrumb belonging to
- *   its process (gjc-runtime.ts). It writes omp's session shape too.
+ * - gjc: the public SDK broker binds its live pane process to the exact saved
+ *   session transcript (gjc-sdk.ts, gjc-runtime.ts). It writes omp's session shape too.
  * - pi: herdr's agent.get names the session jsonl outright under
  *   ~/.pi/agent/sessions/<cwd-slug>/ (pi.ts). Its records are the session shape
  *   parseOmpTranscript reads, but its file is an entry tree, not a log: /tree
@@ -38,11 +38,11 @@ import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } f
 import nodePath, { type PlatformPath } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
-import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
+import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
-import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
+import { forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
 import { isOmoProcess, omoSessionForPane } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
 import { ompHeldTranscript } from "./omp.ts";
@@ -61,6 +61,8 @@ import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, 
 import { invokedSkill } from "./skill-activity.ts";
 import { agentTaskResult, claudePeerId, claudePeerNotice, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
 import { forgetSubagents, lineNotifications, subagentDetails, taskNotification, type SubagentDetail } from "./claude-subagents.ts";
+import { launchedAgents } from "./launched-agents.ts";
+import { readsStartScreen, startScreenMetadata } from "./start-screen.ts";
 
 export { isOmoProcess } from "./omo.ts";
 
@@ -228,6 +230,8 @@ interface TranscriptEntry {
   parentUuid?: string | null;
   isMeta?: boolean;
   isCompactSummary?: boolean;
+  /** "updates": Claude Code shows the entry's thinking text as a progress message, not as reasoning */
+  thinkingDisplay?: unknown;
   message?: { role?: string; content?: unknown; stop_reason?: unknown };
   attachment?: { type?: unknown; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown } };
 }
@@ -419,7 +423,10 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
           turn.parts.push({ kind: "text", text: b.text });
         } else if (b.type === "thinking") {
           const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
-          if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
+          // the terminal prints an "updates" entry's thinking as narration between the tools, so it
+          // is read as that: commentary keeps it in the work block, never taken for the answer
+          if (thinking.trim().length > 0 && entry.thinkingDisplay === "updates") turn.parts.push({ kind: "text", text: thinking, phase: "commentary" });
+          else if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
         } else if (b.type === "tool_use" && typeof b.name === "string") {
           const input = (typeof b.input === "object" && b.input !== null ? b.input : {}) as Record<string, unknown>;
           const part: Extract<ConversationPart, { kind: "tool" }> = {
@@ -1002,6 +1009,7 @@ function liveTurns(path: string, stream: TranscriptStream, source: RecognizedCon
 
 /** Forget every scan and parse kept between polls (tests compare against a cold read). */
 export function forgetTranscriptState(): void {
+  launchedAgents.clear();
   cache.clear();
   writtenSessions.clear();
   forgetClaudeSessions();
@@ -1032,7 +1040,7 @@ export function forgetTranscriptState(): void {
 export function forgetPaneTranscriptState(paneId: string): void {
   const reads = paneReads.get(paneId);
   paneReads.delete(paneId);
-  forgetGjcPane(paneId);
+  launchedAgents.forget(paneId);
   if (reads === undefined) return;
   // two panes can read one transcript (a resumed session, a shared store): what another pane
   // still reads stays
@@ -1401,7 +1409,15 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   const snapshot = await sessionSnapshot();
   let resolved: NativeTranscript;
 
-  const onNotStarted = (error: ConversationNotStarted): RecognizedConversation => {
+  // no transcript states the model yet: the agent's own screen does (start-screen.ts). A screen
+  // that cannot be read leaves it unknown, as it was
+  const notBegun = async (source: RecognizedConversation["source"], id: string): Promise<RecognizedConversation> => {
+    const screen = readsStartScreen(source) ? await paneRead({ paneId, source: "visible", format: "text", timeoutMs: 2_000 }).then((read) => read.text, () => "") : "";
+    const metadata = startScreenMetadata(source, screen);
+    return { source, turns: [], metadata, cursor: null, history_id: id, version: answerVersion(id, `${metadata.model}\0${metadata.reasoning_effort}`) };
+  };
+
+  const onNotStarted = (error: ConversationNotStarted): Promise<RecognizedConversation> => {
     // a file read before and gone since is no conversation not begun: the terminal stands in for it
     if (writtenSessions.has(`${error.source}\0${error.identity}`)) throw new ConversationUnavailable("transcript_missing");
     // nothing comes before a conversation not begun: a cursor into it is another one's
@@ -1411,15 +1427,22 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (status === "working" || status === "blocked") throw error;
     // the chat says there is nothing yet; the session's first prompt writes the file and
     // the next refresh's history_id differs, so the chat takes it whole
-    const id = `unwritten:${error.sessionId}`;
-    return { source: error.source, turns: [], metadata: { model: null, reasoning_effort: null }, cursor: null, history_id: id, version: answerVersion(id, "") };
+    return notBegun(error.source, `unwritten:${error.sessionId}`);
   };
 
   try {
     resolved = await paneTranscript(paneId, codexHome, snapshot, devinDbPath, opencodeDb, hermesHome, grokHome);
+    launchedAgents.forget(paneId);
   } catch (error) {
-    if (error instanceof ConversationNotStarted) return onNotStarted(error);
-    throw error;
+    if (error instanceof ConversationNotStarted) { launchedAgents.forget(paneId); return await onNotStarted(error); }
+    if (!(error instanceof ConversationUnavailable)) throw error;
+    const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
+    if (pane === undefined) { launchedAgents.forget(paneId); throw error; }
+    // an agent this server started writes no session before its first message (launched-agents.ts)
+    const launch = launchedAgents.notBegun(paneId, pane.agent_status);
+    if (launch === null) throw error;
+    if (page.before !== undefined || page.since !== undefined || page.from !== undefined) throw new HistoryChanged();
+    return await notBegun(launch.source, launch.historyId);
   }
   if (resolved.source === "devin-transcript") {
     try {
@@ -1449,7 +1472,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
       rememberPaneSession(paneId, `${resolved.source}\0${resolved.sessionId}`);
       return answer;
     } catch (error) {
-      if (error instanceof ConversationNotStarted) return onNotStarted(error);
+      if (error instanceof ConversationNotStarted) return await onNotStarted(error);
       throw error;
     }
   }

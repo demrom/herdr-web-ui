@@ -1251,7 +1251,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping"] });
     }, 20);
     this.timers.add(opening);
   }
@@ -1322,6 +1322,10 @@ class DemoSocket extends EventTarget {
         break;
       case "presence":
         // the demo sends no alerts, so whether the page is in use holds nothing back
+        break;
+      // the demo socket never goes half-open, but it answers the liveness probe as the server does
+      case "ping":
+        if (Number.isSafeInteger(message.id)) this.push({ type: "pong", id: message.id! });
         break;
       case "attach":
         if (message.pane_id) { this.resizeGrid(message.pane_id, message.cols, message.rows); this.attach(message.pane_id); }

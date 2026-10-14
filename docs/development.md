@@ -97,7 +97,7 @@ bun test                        # needs herdr installed; creates and removes its
 bun run test:ui                 # browser regression against isolated test servers
 bun scripts/sticky-modifiers-regression.ts # mobile held keys through real legacy/Kitty PTYs
 bun scripts/key-bar-customization-demo-regression.ts # mobile key layout, saved combinations and migration on demo fixtures
-bun scripts/key-bar-hold-repeat-regression.ts # phone touch-arrow taps, holds, swipes and sticky Ctrl on demo fixtures
+bun scripts/key-bar-hold-repeat-regression.ts # phone touch key-bar taps, holds (arrows and editing keys), swipes and sticky Ctrl on demo fixtures
 bun scripts/settings-pages-demo-regression.ts # every Settings page on a 390px and a 320px phone, and Back stepping out of the dialog
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/output-browser-qa.ts # terminal output flow control end to end
@@ -115,7 +115,7 @@ after a herdr restart. It prints the time each step took. `KEEP=1` leaves the co
 
 Tests run against a herdr session of their own, `herdr-web-ui-test`. The first run starts a headless `herdr --session herdr-web-ui-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session herdr-web-ui-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session instead.
 
-Browser checks look for Chrome at `/opt/google/chrome/chrome`; set `CHROME_PATH` otherwise. After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
+Browser checks launch `CHROME_PATH` when it is set, else Google Chrome at `/opt/google/chrome/chrome` where that exists, else the lockfile's Playwright Chromium (`scripts/chrome-path.ts`; install it with `bun node_modules/playwright-core/cli.js install chromium`). After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
 
 `HEADED=1 bun scripts/chat-browser-qa.ts` opens its owned native-transcript fixture in a
 visible Chrome window. Its detected Codex fixture process keeps the rollout open; no
@@ -482,6 +482,22 @@ every minute a script is still running), and keeps running the other scripts aft
 Each script's full output goes to `${CHECK_DIR:-.ci}/browser-logs/<script>.log`, with
 `summary.json` beside it; a failure prints the last 400 lines of its log and the log's path, and
 the job then fails. CI uploads `browser-logs` with the evidence on success or failure.
+A script that fails is run a second time (`BROWSER_RETRY=0` turns that off). One that then passes
+does not fail the job, and is not counted as a plain pass either: its first log is kept as
+`<script>.attempt-1.log` and printed, the summary marks it `~` and `summary.json` lists it under
+`flaky`, and on GitHub it gets a warning annotation and a line in the job summary. A flaky script
+is a bug to fix in the script or the app, not noise: the second run only keeps one PR's merge
+from waiting on another change's race. A script that fails twice fails the job.
+The console, GitHub annotations, job summary and `summary.json` name the failing assertion and
+its first script file and line when the log contains them.
+`bun scripts/ci-flakes.ts` ranks, across the last 24 hours of `ci.yml` runs and every attempt of
+each, which script failed or passed only on a second run, and at which assertion and site. It reads
+through `gh` and changes nothing: a failed job's log, and a passed job's only when the job carries
+the flaky warning.
+Use `--hours 30` for a different window, `--repo owner/name` to select a repository instead of
+the current one, or `--json` for counts and rows as JSON; running jobs and unavailable logs are
+counted as skipped.
+
 Under `CI` or with `CHECK_DIR` set, both runners create `UI_EVIDENCE_DIR` at
 `${CHECK_DIR:-.ci}/browser-evidence`. Only the existing sticky-modifier and file-viewer captures
 are enabled automatically: the UI suite and key-bar demo have evidence branches that add

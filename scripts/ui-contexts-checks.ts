@@ -27,6 +27,7 @@ import { checkAlertSound } from "./alert-sound-regression.ts";
 import { checkBackgroundTabKeepsTerminalSize, checkChatKeepsTerminalSize, checkFocusedWindowReclaimsTerminalSize, checkPaneSwitchKeepsTerminalSize } from "./chat-size-regression.ts";
 import { checkUpdateNotice } from "./update-notice-regression.ts";
 import { checkTelemetrySettings } from "./telemetry-regression.ts";
+import { chromePath } from "./chrome-path.ts";
 
 async function timed(name: string, check: () => Promise<void>): Promise<void> {
   const started = performance.now();
@@ -75,7 +76,7 @@ export async function runUiContextChecks(): Promise<void> {
     server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root, usage: new UsageService(undefined, []) });
     const origin = `http://127.0.0.1:${server.port}`;
     browser = await chromium.launch({
-      executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome",
+      executablePath: chromePath(),
       headless: true,
       args: ["--no-sandbox", "--accept-lang=en-US"],
     });

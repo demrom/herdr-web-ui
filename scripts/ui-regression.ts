@@ -28,6 +28,7 @@ import { assertCspClean, watchCsp } from "./csp-violations.ts";
 import type { CspWatch } from "./csp-violations.ts";
 import { browserEvidencePage, browserEvidenceTracing, startBrowserEvidence } from "./browser-evidence.ts";
 import type { BrowserEvidenceSession } from "./browser-evidence.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-browser-")));
 const workspaces: string[] = [];
@@ -83,7 +84,7 @@ try {
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), usage: new UsageService(undefined, []) });
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({
-    executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome",
+    executablePath: chromePath(),
     // English whatever the machine's own languages are (macOS Chrome takes them from the system)
     headless: true, args: ["--no-sandbox", "--accept-lang=en-US"],
   });
@@ -93,6 +94,21 @@ try {
     if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
     for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
   }, panes);
+  // A hook for a check that changes the roster on a page already loaded: a route cannot reach the
+  // /api/machines/events stream the page has open, so `window.__rewriteMachinesFrame`, while set,
+  // rewrites each frame's data before the app reads it (the plan check below).
+  await context.addInitScript(() => {
+    const Native = window.EventSource;
+    window.EventSource = class extends Native {
+      override get onmessage() { return super.onmessage; }
+      override set onmessage(handler) {
+        super.onmessage = typeof handler !== "function" ? handler : (event: MessageEvent) => {
+          const rewrite = (window as unknown as { __rewriteMachinesFrame?: (data: string) => string }).__rewriteMachinesFrame;
+          handler.call(this, rewrite ? new MessageEvent("message", { data: rewrite(event.data) }) : event);
+        };
+      }
+    };
+  });
 
   const page = await context.newPage();
   const pageEvidence = evidenceDirectory ? await watchBrowserEvidence(context, page, "main-app") : undefined;
@@ -512,17 +528,43 @@ try {
     { id: "3", label: "Write the panel", active: null, status: "pending", blocked_by: ["1"], owner: null, started_at: null, ended_at: null },
     { id: "4", label: "Ship it", active: null, status: "pending", blocked_by: ["2", "3"], owner: null, started_at: null, ended_at: null },
   ];
-  const planned = async (target: typeof page): Promise<() => Promise<void>> => {
+  type Roster = { machines: { snapshot?: { panes: { pane_id: string }[] } }[] };
+  const withPlan = (body: Roster): Roster => {
+    for (const machine of body.machines) for (const pane of machine.snapshot?.panes ?? []) if (pane.pane_id === paneA) Object.assign(pane, { plan: { done: 1, total: 4, current: "Writing the parser" } });
+    return body;
+  };
+  // `events`: for a page not loaded yet. The roster also comes over /api/machines/events, whose
+  // first frame (and every roster change after it) is the PC's own snapshot, with no plan: one that
+  // lands after a poll takes the chip away again, and each one drops the poll in flight. That stream
+  // then carries the planned roster once and stays quiet (a reconnect waits an hour), so the only
+  // roster the page gets is the planned one. A page already loaded keeps the stream it has.
+  const planned = async (target: typeof page, { events = false } = {}): Promise<() => Promise<void>> => {
     const unrouteMachines = await routeDrained(target, "**/api/machines", async (route) => {
       const response = await route.fetch();
-      const body = await response.json() as { machines: { snapshot?: { panes: { pane_id: string }[] } }[] };
-      for (const machine of body.machines) for (const pane of machine.snapshot?.panes ?? []) if (pane.pane_id === paneA) Object.assign(pane, { plan: { done: 1, total: 4, current: "Writing the parser" } });
-      await route.fulfill({ response, json: body });
+      await route.fulfill({ response, json: withPlan(await response.json() as Roster) });
     });
+    if (events) {
+      await target.route("**/api/machines/events", async (route) => {
+        const response = await route.fetch({ url: `${origin}/api/machines` });
+        const roster = withPlan(await response.json() as Roster);
+        await route.fulfill({ status: 200, contentType: "text/event-stream", body: `retry: 3600000\ndata: ${JSON.stringify({ type: "machines", machines: roster.machines })}\n\n` });
+      });
+    }
     await target.route(`**/api/pane/plan?pane_id=${encodeURIComponent(paneA)}`, (route) => route.fulfill({ json: { plan: { steps: planSteps }, server_time: new Date().toISOString() } }));
     return unrouteMachines;
   };
   const unroutePlanned = await planned(page);
+  // this page keeps the stream it has: any roster it pushes now (a session or layout change on the
+  // PC) carries the plan too, or that frame would take the chip away between waitFor and click
+  await page.evaluate(([pane, plan]) => {
+    (window as unknown as { __rewriteMachinesFrame?: (data: string) => string }).__rewriteMachinesFrame = (data) => {
+      let payload: { type?: string; machines?: { snapshot?: { panes: { pane_id: string }[] } }[] };
+      try { payload = JSON.parse(data); } catch { return data; }
+      if (payload.type !== "machines") return data;
+      for (const machine of payload.machines ?? []) for (const p of machine.snapshot?.panes ?? []) if (p.pane_id === pane) Object.assign(p, { plan });
+      return JSON.stringify(payload);
+    };
+  }, [paneA, { done: 1, total: 4, current: "Writing the parser" }] as const);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   const planChip = page.getByRole("button", { name: /^Plan: 1 of 4 done/ });
   await planChip.waitFor();
@@ -543,6 +585,7 @@ try {
   await planChip.click();
   await until(async () => await planList.locator(".bg-step").count() === 4, "the plan's steps again");
   await unroutePlanned();
+  await page.evaluate(() => { delete (window as unknown as { __rewriteMachinesFrame?: unknown }).__rewriteMachinesFrame; });
   await page.unroute(`**/api/pane/plan?pane_id=${encodeURIComponent(paneA)}`);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await planList.waitFor({ state: "detached" });
@@ -1442,6 +1485,13 @@ try {
   workspaces.push(repoWorkspace.workspace.workspace_id);
   const repoRow = workspaceHeader(repoWorkspace.workspace.workspace_id);
   await repoRow.waitFor();
+  // herdr has not marked this workspace as a repository's yet: its row is where the first worktree starts
+  await repoRow.hover();
+  await repoRow.locator(".row-menu-toggle").click();
+  const unmarkedRepoMenu = page.getByRole("menu");
+  await unmarkedRepoMenu.getByRole("menuitem", { name: "New worktree", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await unmarkedRepoMenu.waitFor({ state: "detached" });
   const initialResponse = await fetch(`${origin}/api/worktree/create`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workspace_id: repoWorkspace.workspace.workspace_id, branch: "browser/initial", label: "Existing checkout" }),
@@ -1710,6 +1760,10 @@ try {
   await page.keyboard.press("F2");
   await tabName.fill("   ");
   await page.keyboard.press("Enter");
+  // a blank name is refused and said so: the field stays for another try, and Escape keeps the old name
+  await page.locator(".tab-strip-error").getByText("A tab needs a name.", { exact: true }).waitFor();
+  assert.equal(await tabName.count(), 1, "a blank name keeps the field open");
+  await page.keyboard.press("Escape");
   await tabName.waitFor({ state: "detached" });
   assert.deepEqual(await strip.getByRole("tab").allTextContents(), ["first", "second"]);
   assert.equal((await tabsInHerdr()).join(), "first,second");
@@ -1962,14 +2016,18 @@ try {
 
   // Server-owned Send now drops the old suggestion itself, before a delayed prompt read returns.
   await selectPane(pendingPane);
+  await page.keyboard.press("ControlOrMeta+Shift+Comma");
+  await openSettingsPage(page, "Chat");
+  await page.getByRole("switch", { name: "Send queued messages automatically", exact: true }).uncheck();
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
   await reportPending("working");
   await page.locator('.composer-status[data-status="working"]').waitFor();
   await pendingReady(pendingPane);
   await composer.fill("# queued before the suggestion");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await until(async () => await pendingRows.count() === 1, "suggestion test pending input accepted");
-  // A pane switch ends this item's automatic lease. Claude's ready-only suggestion
-  // can then appear beside the retained server-owned item without auto-dispatching it.
+  // Explicit hold keeps the suggestion beside a server-owned item without dispatching it.
+  // Navigation preserves its held state and the same PC connection's recovery actions.
   await selectPane(paneA); await selectPane(pendingPane);
   await page.locator('.pending-message[data-state="held"]').waitFor();
   await pendingReady(pendingPane);
@@ -1989,6 +2047,10 @@ try {
   await pendingRows.waitFor({ state: "hidden" });
   await page.unroute(`**/api/pane/prompt?pane_id=${encodeURIComponent(pendingPane)}`);
   await herdrRpc("pane.send_text", { pane_id: pendingPane, text: "\u0003" });
+  await page.keyboard.press("ControlOrMeta+Shift+Comma");
+  await openSettingsPage(page, "Chat");
+  await page.getByRole("switch", { name: "Send queued messages automatically", exact: true }).check();
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
   await workspaceClose(pendingWorkspace.workspace.workspace_id);
   workspaces.splice(workspaces.indexOf(pendingWorkspace.workspace.workspace_id), 1);
   await selectPane(paneA);
@@ -2000,9 +2062,29 @@ try {
   // (after the steps that take the newest socket for the page's own: the other half opens one)
   {
     await selectPane(paneA);
+    // The drag goes in steps, each waited on, as split-view-regression.ts drags. One dragTo jumps
+    // from the row to the drop point in a single move and drops at once: the drop then rests on the
+    // one dragover sent as the drag starts, and nothing checks that the page took it (on a busy
+    // runner it left no split). Here the row crosses the native drag threshold, App shows its guide
+    // (it saw the dragstart), the area is measured after that, and the drop waits for a dragover on
+    // the drop point to take the pane for the right half.
     const area = page.locator(".pane-split");
+    const source = page.locator(`.pane-select[title^="${paneB} —"]`);
+    await source.scrollIntoViewIfNeeded();
+    const from = (await source.boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 4, { steps: 2 });
+    await page.waitForFunction(() => document.querySelector(".split-drop")?.classList.contains("is-visible") === true);
     const box = (await area.boundingBox())!;
-    await page.locator(`.pane-select[title^="${paneB} —"]`).dragTo(area, { targetPosition: { x: box.width * 0.8, y: box.height / 2 } });
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 8 });
+    // crossing the transcript's children can end on a dragenter alone: a move on the same element sends the dragover
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
+    await page.waitForFunction(() => {
+      const guide = document.querySelector(".split-drop");
+      return guide?.classList.contains("is-visible") === true && guide.getAttribute("data-side") === "right";
+    });
+    await page.mouse.up();
     await until(async () => await page.locator(".pane-slot").count() === 2, "two halves after the drop");
     const half = (side: string) => page.locator(`.pane-slot[data-side="${side}"]`);
     await half("left").getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
@@ -2057,7 +2139,7 @@ try {
   await planPhone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat" })));
   const phone = await planPhone.newPage();
   phone.on("pageerror", (error) => errors.push(error.message));
-  const unroutePhonePlanned = await planned(phone);
+  const unroutePhonePlanned = await planned(phone, { events: true });
   await phone.goto(`${origin}/?pane=${encodeURIComponent(paneA)}`);
   await phone.locator(".conn-live").waitFor();
   const phonePlan = phone.getByRole("button", { name: /^Plan: 1 of 4 done/ });
@@ -2100,6 +2182,16 @@ try {
   await mobilePage.locator(`.pane-select[title^="${paneB} —"]`).click();
   await mobilePage.getByRole("textbox", { name: "Message", exact: true }).waitFor();
   console.log("PASS a pane picked on a phone waits for a tap before raising the keyboard");
+
+  // Escape with the drawer open closes it and reaches nothing else, wherever the focus is
+  await mobilePage.evaluate(() => { (window as unknown as { escapes: number }).escapes = 0; window.addEventListener("keydown", (e) => { if (e.key === "Escape") (window as unknown as { escapes: number }).escapes++; }); });
+  await mobilePage.locator('button[aria-controls="workspace-drawer"]').click();
+  await mobilePage.locator("#workspace-drawer.is-open").waitFor();
+  await mobilePage.getByRole("textbox", { name: "Message", exact: true }).focus();
+  await mobilePage.keyboard.press("Escape");
+  await mobilePage.locator("#workspace-drawer.is-open").waitFor({ state: "detached" });
+  assert.equal(await mobilePage.evaluate(() => (window as unknown as { escapes: number }).escapes), 0, "Escape that closes the drawer does not reach the page");
+  console.log("PASS Escape closes a phone's drawer and goes no further");
 
   // Claude's suggestion on a phone is the placeholder and a chip that fills the box, until Settings turns the chip off
   const promptRoute = `**/api/pane/prompt?pane_id=${encodeURIComponent(paneB)}`;

@@ -7,6 +7,7 @@ import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // The model label in the input card's last row, fitted to what is measured there, on the
 // unmodified app over the demo's fixture transport. The demo's panes name no context window and
@@ -207,7 +208,7 @@ try {
   };
 
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       // One primary control across agents: Stop with an empty working draft, Send with text.
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
@@ -237,18 +238,6 @@ try {
         assert.ok(row.send && !row.queue && !row.sendOptions);
       });
       console.log("PASS agents at 350, 390, 800 and 1440px use one Stop/Send control with no Queue or dropdown");
-
-      // The saved-drafts trigger sits just before Send at the card's right end: its popover opens
-      // toward the inside of the card and stays inside the window at every width.
-      for (const width of [390, 800, 1280]) await withCard(browser, width, { agent: "claude", model: "gpt-5.6" }, async (page) => {
-        await draft(page);
-        await page.locator(".composer-stash-trigger").click();
-        const menu = page.locator(".composer-stash-menu");
-        await menu.waitFor();
-        const edges = await menu.evaluate((node) => { const box = node.getBoundingClientRect(); return { left: box.left, right: box.right, window: innerWidth }; });
-        assert.ok(edges.left >= 0 && edges.right <= edges.window, `${width}px: the saved-drafts popover stays inside the window: ${JSON.stringify(edges)}`);
-      });
-      console.log("PASS the saved-drafts popover stays inside the window at 390, 800 and 1280px");
 
       for (const width of [350, 390]) await withCard(browser, width, { agent: "codex", model: LONG_MODEL, mic: true }, async (page) => {
         await draft(page);

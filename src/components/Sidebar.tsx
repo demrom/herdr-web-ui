@@ -5,6 +5,7 @@ import "./Sidebar.css";
 
 import type { AgentStatus, PaneInfo, PlanSummary, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
+import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import type { AppActions } from "../lib/actions.ts";
 import { knownStatus, rollupStatus, STATUS_WORD } from "../lib/status.ts";
@@ -14,7 +15,8 @@ import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
-import { folderName, shortPathTitle, taskRowLines } from "../lib/paneName.ts";
+import { folderName, shortPathTitle, stripPaneChrome, taskRowLines } from "../lib/paneName.ts";
+import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -37,16 +39,6 @@ function storedWorktreeCollapsed(machineId: string, repoKeys: string[]): Set<str
   return collapsed;
 }
 
-/** shell prompt titles: `user@host:` is chrome, the path after it is the information */
-const SHELL_PREFIX = /^[^:@\s]+@[^:@\s]+:/;
-/** Herdr's agent glyph and spinner are already represented by the row mark and badge. */
-const AGENT_CHROME = /^π\s*[^\p{L}\p{N}\s]?\s*/u;
-
-function stripPaneChrome(title: string, agent: string | null | undefined): string {
-  const shellStripped = title.replace(SHELL_PREFIX, "");
-  return agent ? shellStripped.replace(AGENT_CHROME, "") : shellStripped;
-}
-
 export { paneTitle };
 
 /**
@@ -55,6 +47,14 @@ export { paneTitle };
  */
 export function displayPaneTitle(pane: PaneInfo): string {
   return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), pane.agent)) || pane.pane_id;
+}
+
+/**
+ * The title an alert names a pane by: as a row's, with the folder Codex adds after its thread
+ * kept. A notification is read away from the row that says where the pane is.
+ */
+export function alertPaneTitle(pane: PaneInfo): string {
+  return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), pane.agent, true)) || pane.pane_id;
 }
 
 /** herdr could not bring this pane back after a restart (0.9.3+ `restore_error`): a warning in the status cell, its reason on hover. */
@@ -177,8 +177,29 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const machineId = useMachineId();
   // a DONE looked at here reads as ready with Quiet opened finishes on (lib/sidebarActivity.tsx)
   const activity = useSidebarActivity();
-  const { branches, rememberOpened } = useWorktreeBranches(snapshot, online);
-  const { closeWorkspace, moveWorkspace, removeWorktree, renameWorkspace } = useMachineApi();
+  const { branches, rememberOpened } = useWorktreeBranches(snapshot, online, true);
+  const { closeWorkspace, listWorktrees, moveWorkspace, removeWorktree, renameWorkspace } = useMachineApi();
+  // herdr marks only a workspace it opened as a worktree. One made on a repository's folder has no
+  // `worktree`, and it is where the first worktree starts: each is asked once whether git answers
+  // for it. A refusal (4xx) is an answer and is kept; a failure to ask is not, so that workspace
+  // keeps what was known of it and is asked again when the set changes or the PC comes back.
+  const unmarked = (snapshot?.workspaces ?? []).filter((workspace) => !workspace.worktree).map((workspace) => workspace.workspace_id).join("\n");
+  const [repositoryWorkspaces, setRepositoryWorkspaces] = useState<ReadonlySet<string>>(() => new Set());
+  const repositoryAnswers = useRef(new Map<string, boolean>());
+  useEffect(() => {
+    const known = repositoryAnswers.current;
+    if (!online || unmarked === "") { known.clear(); setRepositoryWorkspaces(new Set()); return; }
+    const ids = unmarked.split("\n");
+    for (const id of [...known.keys()]) if (!ids.includes(id)) known.delete(id);
+    let live = true;
+    const publish = () => { if (live) setRepositoryWorkspaces(new Set(ids.filter((id) => known.get(id) === true))); };
+    publish();
+    void Promise.all(ids.filter((id) => !known.has(id)).map((id) => listWorktrees(id).then(
+      () => { if (live) known.set(id, true); },
+      (error: unknown) => { if (live && error instanceof ApiError && error.status < 500) known.set(id, false); },
+    ))).then(publish);
+    return () => { live = false; };
+  }, [listWorktrees, unmarked, online]);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [worktreeDialog, setWorktreeDialog] = useState<{ mode: WorktreeDialogMode; workspace: WorkspaceInfo } | null>(null);
@@ -333,7 +354,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     // worktree workspaces close with it, which herdr refuses without close_group
     const linked = workspace.worktree?.is_linked_worktree === true;
     const worktrees = linked ? [] : (snapshot?.workspaces.filter((candidate) => candidate.worktree?.is_linked_worktree && candidate.worktree.repo_key === workspace.worktree?.repo_key) ?? []);
-    const worktreeItems: RowMenuItem[] = workspace.worktree && !linked ? [
+    const worktreeItems: RowMenuItem[] = (workspace.worktree || repositoryWorkspaces.has(workspace.workspace_id)) && !linked ? [
       { id: "new-worktree", label: t("New worktree"), icon: GitBranch, run: () => setWorktreeDialog({ mode: "create", workspace }) },
       { id: "open-worktree", label: t("Open worktree…"), icon: FolderOpen, run: () => setWorktreeDialog({ mode: "open", workspace }) },
     ] : [];
@@ -351,7 +372,11 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     // a repository's open worktree workspaces go with it
     const closeItem: RowMenuItem = { id: "close", label: t("Close workspace"), icon: X, danger: true, divider: true, run: () => setConfirm({
       title: t("Close workspace {name}?", { name: workspace.label }),
-      body: worktrees.length > 0 ? t("{n} panes and {m} worktree workspaces close with it; the agents in them stop, and the checkouts stay.", { n: paneCount, m: worktrees.length }) : t("{n} panes close with it, and the agents in them stop.", { n: paneCount }),
+      body: worktrees.length > 0
+        ? t(paneCount === 1
+          ? (worktrees.length === 1 ? "{n} pane and {m} worktree workspace close with it; the agents in them stop, and the checkout stays." : "{n} pane and {m} worktree workspaces close with it; the agents in them stop, and the checkouts stay.")
+          : (worktrees.length === 1 ? "{n} panes and {m} worktree workspace close with it; the agents in them stop, and the checkout stays." : "{n} panes and {m} worktree workspaces close with it; the agents in them stop, and the checkouts stay."), { n: paneCount, m: worktrees.length })
+        : t(paneCount === 1 ? "{n} pane closes with it, and the agent in it stops." : "{n} panes close with it, and the agents in them stop.", { n: paneCount }),
       run: () => leave(() => closeWorkspace(workspace.workspace_id, worktrees.length > 0)),
     }) };
     // One native workspace menu for both the pointer and the explicit ⋯ button.
@@ -390,7 +415,11 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const saveWorkspaceRename = (workspaceId: string): void => {
     const typed = workspaceLabel;
     const label = typed.trim();
+    // herdr would keep an empty name, and the row would show none: the editor stays open
+    if (label === "") { noteError(t("A workspace needs a name."), workspaceId); return; }
     setEditingWorkspaceId(null);
+    // a name herdr set longer than the field allows is not sent back to be refused
+    if (label === snapshotRef.current?.workspaces.find((candidate) => candidate.workspace_id === workspaceId)?.label) return;
     void renameWorkspace(workspaceId, label).catch((reason: unknown) => {
       // as for a pane: the typed name survives a failed request, for as long as the workspace does
       if (!editorOpen() && snapshotRef.current?.workspaces.some((candidate) => candidate.workspace_id === workspaceId)) {
@@ -592,6 +621,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
             className="input workspace-rename-input"
             aria-label={t("Workspace name")}
             autoFocus
+            maxLength={MAX_LABEL_CHARS}
             value={workspaceLabel}
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => setWorkspaceLabel(event.target.value)}
@@ -668,6 +698,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
         const repoKey = worktreeDialog.workspace.worktree?.repo_key;
         if (repoKey) setWorktreeCollapsed(repoKey, false);
         setWorktreeDialog(null);
+        if (opened.agent_started === true) actions.agentStarted(machineId, opened.pane_id);
         actions.selectPane(opened.pane_id);
       }} />}
     </div>

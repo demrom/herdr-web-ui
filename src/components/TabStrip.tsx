@@ -11,6 +11,7 @@ import { ArrowLeft, ArrowRight, Ellipsis, Pencil, Plus, Terminal, X } from "luci
 import "./TabStrip.css";
 
 import type { HerdrPane, HerdrTab, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { ApiError } from "../lib/api.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
@@ -218,9 +219,10 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   // an empty name is not sent: herdr would keep it, and its own tab row would show nothing
   const saveRename = (tab: HerdrTab): void => {
     const label = editing?.value.trim() ?? "";
+    if (label === "") { setError(t("A tab needs a name.")); return; }
     refocus.current = tab.tab_id;
     setEditing(null);
-    if (label === "" || label === nameOf(tab)) return;
+    if (label === nameOf(tab)) return;
     setSent({ tabId: tab.tab_id, label });
     void renameTab(tab.tab_id, label).catch((reason: unknown) => {
       if (latest.current.machineId !== machineId || latest.current.workspaceId !== workspace.workspace_id) return;
@@ -363,7 +365,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                   aria-label={t("Tab name")}
                   autoFocus
                   size={Math.max(8, editing.value.length + 1)}
-                  maxLength={80}
+                  maxLength={MAX_LABEL_CHARS}
                   placeholder={name}
                   value={editing.value}
                   onFocus={(event) => event.currentTarget.select()}

@@ -449,6 +449,9 @@ try {
 
     // native selection and a real copy: the rows' text alone, blank lines kept, no gutter numbers
     if (!phone) {
+      // the worker's colors redraw the rows, plain until then, and a redraw drops a selection made on the plain ones
+      await page.locator(".repo-diff[data-colored]").waitFor();
+      await page.waitForFunction(() => (document.querySelector(".repo-diff diffs-container")?.shadowRoot?.querySelectorAll("[data-line] span[style*='--herdr-code-token']").length ?? 0) > 0);
       const expected = hunkRowTexts(moneyPatch.patch, 7);
       assert.ok(expected.includes(""), "the selected rows span a blank line");
       const selected = await selectRows(page, 0, 6);

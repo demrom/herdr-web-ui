@@ -61,6 +61,7 @@ import type {
   WorktreeRemoved,
   ZoomPaneRequest,
 } from "../../shared/protocol.ts";
+import { SUPPORTED_AGENT_KINDS } from "../../shared/supported-agents.ts";
 import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
 import { readInstalledNotes, readUpdateNotes, type HerdrUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
@@ -542,9 +543,11 @@ export async function clearPane(paneId: string, machineId = "local"): Promise<vo
   await sendJson(machinePath(machineId, "pane/clear"), "POST", { pane_id: paneId });
 }
 
-/** GET /api/agents: the agent kinds herdr can start, for the new-session dialog. */
+/** GET /api/agents: of the agent kinds herdr can start, the ones this app supports and that PC has installed, for the new-session dialog. */
 export async function fetchAgentKinds(machineId = "local"): Promise<AgentKind[]> {
-  return (await getJson<{ agents: AgentKind[] }>(machinePath(machineId, "agents"))).agents;
+  // filtered here, not on the server: a remote PC's older bridge still answers every manifest,
+  // and says nothing of what is installed, so its supported kinds are all offered
+  return (await getJson<{ agents: AgentKind[] }>(machinePath(machineId, "agents"))).agents.filter((agent) => SUPPORTED_AGENT_KINDS.has(agent.kind) && agent.installed !== false);
 }
 
 /** GET /api/integrations: herdr's agent integrations on that PC and whether each is installed. */

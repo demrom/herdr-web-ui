@@ -6,6 +6,7 @@ import { chromium, type Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // The late arrival of the app's faces (src/fonts/fonts.css, font-display: swap), on the unmodified
 // app over the demo's fixture transport: the font files are held back here as a slow link holds
@@ -55,7 +56,7 @@ try {
   } });
   const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.web)}`;
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       /** A phone on a slow link: every font file is held until `release`. `stall` names files that never come at all. */
       const open = async (stall: RegExp | null, height = 844): Promise<{ page: Page; errors: string[]; held: () => number; release: () => void; close: () => Promise<void> }> => {
