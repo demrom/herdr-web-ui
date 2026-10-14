@@ -1767,6 +1767,9 @@ export function createServer(
           return response;
         }
       }
+      // Chat reads can chain several valid 10 s RPCs. Leave the 15/30 s client deadline
+      // in charge rather than Bun's default 10 s idle cutoff. PC proxies have their own budget above.
+      if (pathname === "/api/pane/read" || pathname === "/api/pane/conversation") bunServer.timeout(request, 60);
       if (pathname === "/ws") {
         if (!sameOrigin(request)) return new Response("invalid origin", { status: 403 });
         const deviceId = access.level === "full" ? access.device?.id : undefined;
