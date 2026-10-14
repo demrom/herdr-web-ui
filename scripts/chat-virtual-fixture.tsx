@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { ChatView } from "../src/components/ChatView.tsx";
 import { MachineContext } from "../src/lib/machineContext.tsx";
 import { SettingsProvider } from "../src/lib/settings.ts";
+import { OpenFileContext } from "../src/lib/filePaths.ts";
 
 declare global {
   interface Window {
@@ -30,7 +31,9 @@ function Fixture() {
   return <div className="terminal-host"><div className="terminal-stack is-chat" style={{ position: "relative", height, width: "100%" }}>
     <MachineContext.Provider value={machine}>
       <Profiler id="chat" onRender={() => window.dispatchEvent(new Event("chat-qa-commit"))}>
-        <ChatView key={machine} paneId="same-pane" refreshKey={refresh} connected ended={false} agent={null} agentStatus="working" pageScroll={pageScroll} />
+        <OpenFileContext.Provider value={() => {}}>
+          <ChatView key={machine} paneId="same-pane" refreshKey={refresh} connected ended={false} agent={null} agentStatus="working" pageScroll={pageScroll} />
+        </OpenFileContext.Provider>
       </Profiler>
     </MachineContext.Provider>
   </div></div>;

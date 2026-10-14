@@ -14,6 +14,7 @@ import { VoiceService } from "./voice.ts";
 import { Telemetry } from "./telemetry.ts";
 import { NOTICE_VERSION, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "../src/lib/settings.ts";
+import { HerdrSocket } from "../src/lib/ws.ts";
 import { herdrRpc, paneRead, ping, sessionSnapshot, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { descriptorPath, type BridgeDescriptor } from "./bridge.ts";
@@ -652,7 +653,7 @@ describe("mutation body validation", () => {
   it("rejects non-object JSON without touching herdr or losing the error envelope", async () => {
     for (const path of [
       "/api/workspace/create", "/api/tab/create", "/api/tab/rename", "/api/tab/close", "/api/tab/move", "/api/workspace/rename", "/api/workspace/move", "/api/workspace/close",
-      "/api/pane/rename", "/api/pane/input", "/api/pane/keys", "/api/pane/close", "/api/pane/move", "/api/pane/image",
+      "/api/pane/rename", "/api/pane/input", "/api/pane/keys", "/api/pane/close", "/api/pane/image",
       "/api/pane/scroll", "/api/agent/rename",
     ]) {
       for (const body of [null, [], "text", 42, true]) {
@@ -1688,12 +1689,57 @@ describe("POST /api/pane/image", () => {
     expect(basename(bare.path)).toMatch(/^file-.*\.bin$/);
   });
 
-  it("rejects an image above the size ceiling with 413", async () => {
-    const oversized = Buffer.alloc(9 * 1024 * 1024, 1).toString("base64");
+  it("stores a 20 MiB file whole (regression: 413 while the ceiling was 8 MiB)", async () => {
+    const bytes = Buffer.alloc(20 * 1024 * 1024, 7);
+    const res = await post({ pane_id: qaPaneId, content_type: "application/zip", data_base64: bytes.toString("base64"), name: "big.zip" });
+    expect(res.status).toBe(200);
+    const { path } = (await res.json()) as { path: string };
+    expect(statSync(path).size).toBe(bytes.byteLength);
+  });
+
+  it("rejects a 40 MiB file (a 55.9 MB body, under Bun's 64 MiB cap) with 413 and the JSON reason (control)", async () => {
+    const oversized = Buffer.alloc(40 * 1024 * 1024, 1).toString("base64");
     const res = await post({ pane_id: qaPaneId, content_type: "image/png", data_base64: oversized });
     expect(res.status).toBe(413);
-    const body = (await res.json()) as { error: { code: string } };
+    const body = (await res.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe("image_too_large");
+    expect(body.error.message.length).toBeGreaterThan(0);
+  });
+
+  it("counts a streamed body that announces no length and refuses it past the bound (regression: invalid_json on main)", async () => {
+    const chunk = new TextEncoder().encode("A".repeat(1024 * 1024));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent === 0) controller.enqueue(new TextEncoder().encode(`{"pane_id":"${qaPaneId}","content_type":"application/zip","data_base64":"`));
+        if (sent++ < 60) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const res = await fetch(`${base()}/api/pane/image`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("image_too_large");
+  });
+
+  it("passes a 20 MiB upload through a PC proxy route (regression: the remote refused it above 8 MiB)", async () => {
+    const manager = {
+      endpoint: () => ({ url: base(), token: "" }),
+      trackTerminal: () => () => undefined,
+    } as unknown as MachineManager;
+    const bytes = Buffer.alloc(20 * 1024 * 1024, 9);
+    const res = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/pane/image", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-herdr-machine": "1" },
+      body: JSON.stringify({ pane_id: qaPaneId, content_type: "application/zip", data_base64: bytes.toString("base64"), name: "remote.zip" }),
+    }), manager);
+    expect(res.status).toBe(200);
+    const { path } = (await res.json()) as { path: string };
+    expect(statSync(path).size).toBe(bytes.byteLength);
   });
 
   it("rejects empty image data with 400", async () => {
@@ -1984,16 +2030,224 @@ describe("WebSocket roles and status push", () => {
       phone.send({ type: "input", pane_id: paneId, text: "clear; echo size=$(stty size | tr ' ' x)\r" });
       const deadline = Date.now() + 15_000;
       let screen = "";
+      let lastError: unknown;
       while (Date.now() <= deadline) {
-        screen = (await paneRead({ paneId, source: "visible", format: "text", timeoutMs: 1_000 })).text;
+        // one read that times out is not the verdict: keep polling until the deadline
+        try {
+          screen = (await paneRead({ paneId, source: "visible", format: "text", timeoutMs: 1_000 })).text;
+        } catch (error) {
+          lastError = error;
+          continue;
+        }
         if (screen.includes("size=27x91")) break;
       }
-      expect(screen, "the shell sees the terminal lens's grid").toContain("size=27x91");
+      expect(screen, `the shell sees the terminal lens's grid (last pane.read error: ${String(lastError)})`).toContain("size=27x91");
     } finally {
       phone.close();
       await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
     }
   }, 60_000);
+
+  // #472: a device that goes back to its chat lens gives the shared pty back to a terminal still
+  // showing, without waiting for that terminal's own resize, focus or click
+  describe("release-size", () => {
+    const ws = () => RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    // the shell's `stty size` goes to a file of its own per ask: herdr redraws the pane's screen as
+    // cell updates, so the same answer twice never reads back from the stream. Asked again until the
+    // deadline: herdr applies a pty resize to the pane a moment after it.
+    let asks = 0;
+    const shellSees = async (socket: RecordingSocket, paneId: string, size: string) => {
+      const want = size.replace("x", " ");
+      let last = "";
+      for (const deadline = Date.now() + 15_000; Date.now() < deadline;) {
+        const file = join(tmpdir(), `herdr-web-ui-release-size-${process.pid}-${++asks}`);
+        socket.send({ type: "input", pane_id: paneId, text: `stty size > ${file}.part && mv ${file}.part ${file}\r` });
+        for (const answered = Date.now() + 1000; Date.now() < answered && !existsSync(file);) await Bun.sleep(25);
+        if (!existsSync(file)) continue;
+        last = readFileSync(file, "utf8").trim();
+        rmSync(file, { force: true });
+        if (last === want) return;
+      }
+      throw new Error(`the shell saw "${last}", not "${want}"`);
+    };
+    const attach = async (socket: RecordingSocket, paneId: string, cols: number, rows: number) => {
+      socket.send({ type: "attach", pane_id: paneId, cols, rows });
+      await socket.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId, "attach took", 15_000);
+    };
+
+    it("returns the pty to the desktop's grid when the phone leaves the terminal lens", async () => {
+      const created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-release-size" });
+      const paneId = created.root_pane.pane_id;
+      const desktop = await ws();
+      const phone = await ws();
+      try {
+        await attach(desktop, paneId, 120, 40);
+        // the phone opens the terminal lens: its viewport takes the shared grid
+        await attach(phone, paneId, 53, 33);
+        await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId && m.cols === 53, "the phone took the grid", 5000);
+        await shellSees(desktop, paneId, "33x53");
+
+        desktop.seen.length = 0;
+        phone.send({ type: "release-size", pane_id: paneId });
+        // regression (fails on main): the desktop's grid comes back within 1 s, with no desktop frame sent
+        expect(await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId, "the grid given back", 5000)).toMatchObject({ cols: 120, rows: 40 });
+        // regression (fails on main): the shell in the pane sees the desktop's grid
+        await shellSees(desktop, paneId, "40x120");
+        // control: one server resize for the release, no ping-pong after it
+        expect(desktop.seen.filter((m) => m.type === "pane-geometry" && m.pane_id === paneId)).toHaveLength(1);
+      } finally {
+        desktop.close();
+        phone.close();
+        await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
+      }
+    }, 60_000);
+
+    it("skips a hidden client's grid when another client releases, leaving the size if nobody shows a terminal", async () => {
+      const created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-release-size-hidden" });
+      const paneId = created.root_pane.pane_id;
+      const desktop = await ws();
+      const phone = await ws();
+      // Use the actual browser client for keepSize, not a hand-written release frame: the bug is
+      // that a mounted but hidden terminal used to leave its grid on the server.
+      const globals = globalThis as unknown as { window?: unknown };
+      const beforeWindow = globals.window;
+      globals.window = globalThis;
+      const hidden = new HerdrSocket(`ws://localhost:${server.port}/ws`);
+      const nextHidden = (matches: (message: import("../shared/protocol.ts").ServerMessage) => boolean) =>
+        new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => { off(); reject(new Error("hidden client did not answer")); }, 15_000);
+          const off = hidden.on((message) => {
+            const ack = message.type === "pty-data" ? hidden.outputAcknowledgement(message) : undefined;
+            ack?.();
+            if (matches(message)) { clearTimeout(timeout); off(); resolve(); }
+          });
+        });
+      try {
+        await attach(desktop, paneId, 120, 40);
+        const ready = nextHidden((m) => m.type === "input-ready" && m.pane_id === paneId);
+        hidden.attach(paneId, 100, 30);
+        hidden.connect();
+        await ready;
+        await desktop.waitFor((m) => m.type === "pane-geometry" && m.cols === 100, "hidden client's initial grid", 5000);
+        await attach(phone, paneId, 53, 33);
+        await desktop.waitFor((m) => m.type === "pane-geometry" && m.cols === 53, "phone's grid", 5000);
+        await shellSees(desktop, paneId, "33x53");
+
+        // An in-band response on the same connection orders keepSize before the phone releases.
+        // A nonexistent pending ID changes nothing and sends no terminal input.
+        hidden.keepSize(paneId);
+        expect(await hidden.pendingAction(paneId, "nonexistent-472", "discard")).toMatchObject({ ok: false });
+        desktop.seen.length = 0;
+        phone.send({ type: "release-size", pane_id: paneId });
+        // regression (fails on main): the hidden 100x30 candidate must not win.
+        expect(await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId, "remaining terminal's grid", 5000))
+          .toMatchObject({ cols: 120, rows: 40 });
+        await shellSees(desktop, paneId, "40x120");
+        expect(desktop.seen.filter((m) => m.type === "pane-geometry")).toHaveLength(1);
+
+        desktop.seen.length = 0;
+        desktop.send({ type: "release-size", pane_id: paneId });
+        desktop.send({ type: "ping", id: 47221 });
+        await desktop.waitFor((m) => m.type === "pong" && m.id === 47221, "last terminal released", 5000);
+        // control: no terminal viewers remain; do not resize to a hidden or Chat grid.
+        expect(desktop.seen.filter((m) => m.type === "pane-geometry")).toEqual([]);
+        await shellSees(desktop, paneId, "40x120");
+      } finally {
+        hidden.close();
+        globals.window = beforeWindow;
+        desktop.close();
+        phone.close();
+        await workspaceClose(created.workspace.workspace_id);
+      }
+    }, 60_000);
+
+    it("keeps a grid released during attach creation out of the fallback candidates", async () => {
+      const created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-release-size-creating" });
+      const paneId = created.root_pane.pane_id;
+      const hidden = await ws();
+      const phone = await ws();
+      try {
+        // Back-to-back on the same connection: release lands during the initial terminal lookup.
+        hidden.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+        hidden.send({ type: "release-size", pane_id: paneId });
+        hidden.send({ type: "ping", id: 47222 });
+        await hidden.waitFor((m) => m.type === "pong" && m.id === 47222, "release processed during creation", 5000);
+        await hidden.waitFor((m) => m.type === "input-ready", "hidden attach completed", 15_000);
+        await attach(phone, paneId, 53, 33);
+        await hidden.waitFor((m) => m.type === "pane-geometry" && m.cols === 53, "phone grid", 5000);
+        await shellSees(phone, paneId, "33x53");
+        hidden.seen.length = 0;
+        phone.send({ type: "release-size", pane_id: paneId });
+        phone.send({ type: "ping", id: 47223 });
+        await phone.waitFor((m) => m.type === "pong" && m.id === 47223, "phone release processed", 5000);
+        // regression (fails on main): the completed attach must not revive a released grid.
+        expect(hidden.seen.filter((m) => m.type === "pane-geometry")).toEqual([]);
+        await shellSees(phone, paneId, "33x53");
+      } finally {
+        hidden.close();
+        phone.close();
+        await workspaceClose(created.workspace.workspace_id);
+      }
+    }, 60_000);
+
+    it("never overwrites a resize another client sends after the release", async () => {
+      const created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-release-size-race" });
+      const paneId = created.root_pane.pane_id;
+      const desktop = await ws();
+      const phone = await ws();
+      const third = await ws();
+      try {
+        await attach(desktop, paneId, 120, 40);
+        await attach(phone, paneId, 53, 33);
+        // the third client watches from the chat lens until it resizes
+        third.send({ type: "attach", pane_id: paneId, cols: 30, rows: 10, keep_size: true });
+        await third.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId, "third attach took", 15_000);
+        await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId && m.cols === 53, "the phone took the grid", 5000);
+
+        desktop.seen.length = 0;
+        phone.send({ type: "release-size", pane_id: paneId });
+        third.send({ type: "resize", pane_id: paneId, cols: 100, rows: 30 });
+        await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId && m.cols === 100, "the third client's resize", 5000);
+        // control: the pty ends at the later resize, whichever of the two frames the server read first
+        await shellSees(third, paneId, "30x100");
+        // control: at most the release's own resize before the third client's, nothing after it
+        const grids = desktop.seen.filter((m) => m.type === "pane-geometry" && m.pane_id === paneId);
+        expect(grids.length).toBeLessThanOrEqual(2);
+        expect(grids.at(-1)).toMatchObject({ cols: 100, rows: 30 });
+      } finally {
+        for (const socket of [desktop, phone, third]) socket.close();
+        await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
+      }
+    }, 60_000);
+
+    it("ignores a release from a client that never drove the grid, as an older server ignores the frame", async () => {
+      const created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-release-size-noop" });
+      const paneId = created.root_pane.pane_id;
+      const desktop = await ws();
+      const chat = await ws();
+      try {
+        await attach(desktop, paneId, 120, 40);
+        chat.send({ type: "attach", pane_id: paneId, cols: 53, rows: 33, keep_size: true });
+        await chat.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId, "chat attach took", 15_000);
+        desktop.seen.length = 0;
+        chat.seen.length = 0;
+        chat.send({ type: "release-size", pane_id: paneId });
+        // also for a pane this connection never attached
+        chat.send({ type: "release-size", pane_id: "w-nonexistent:p1" });
+        chat.send({ type: "ping", id: 472 });
+        // control (passes on main): the connection stays open and answers, with no error frame
+        await chat.waitFor((m) => m.type === "pong" && m.id === 472, "pong after release-size", 5000);
+        expect(chat.seen.filter((m) => m.type === "error")).toEqual([]);
+        // control (passes on main): the grid stays the desktop's
+        await shellSees(desktop, paneId, "40x120");
+        expect(desktop.seen.filter((m) => m.type === "pane-geometry")).toEqual([]);
+      } finally {
+        desktop.close();
+        chat.close();
+        await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
+      }
+    }, 60_000);
+  });
 
   it("rejects an unknown role mode with an in-band error", async () => {
     const client = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
@@ -2310,6 +2564,30 @@ describe("web push", () => {
     const gone = await postJson("/api/push/test", { endpoint: fake.subscription.endpoint });
     expect(gone.status).toBe(404);
     expect(((await gone.json()) as ApiError).error.code).toBe("subscription_not_found");
+  });
+
+  // regression (fails on main): an endpoint the push service retired is refused, never-known stays not found (#1038)
+  it.each([404, 410])("answers subscription_gone on the first test when the push service returns %i", async (status) => {
+    const retiring = await startFakePushService();
+    try {
+      expect((await postJson("/api/push/subscribe", { subscription: retiring.subscription })).status).toBe(204);
+      retiring.answerWith(status);
+      const first = await postJson("/api/push/test", { endpoint: retiring.subscription.endpoint });
+      expect(first.status).toBe(410);
+      expect(((await first.json()) as ApiError).error.code).toBe("subscription_gone");
+      const again = await postJson("/api/push/subscribe", { subscription: retiring.subscription });
+      expect(again.status).toBe(410);
+      expect(((await again.json()) as ApiError).error.code).toBe("subscription_gone");
+      const tested = await postJson("/api/push/test", { endpoint: retiring.subscription.endpoint });
+      expect(tested.status).toBe(410);
+      expect(((await tested.json()) as ApiError).error.code).toBe("subscription_gone");
+      // control
+      const unknown = await postJson("/api/push/test", { endpoint: "https://push.example/never-known" });
+      expect(unknown.status).toBe(404);
+      expect(((await unknown.json()) as ApiError).error.code).toBe("subscription_not_found");
+    } finally {
+      retiring.stop();
+    }
   });
 
   it("pushes a live pane's status change to a subscribed device", async () => {

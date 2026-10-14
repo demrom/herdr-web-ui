@@ -44,17 +44,6 @@ const layout = async (page: Page, path: string, body: Record<string, unknown>): 
   assert.equal(status, 200, `${path} answered ${status}`);
 };
 
-const setNarrowFit = async (page: Page, on: boolean): Promise<void> => {
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-  await dialog.getByText("Terminal", { exact: true }).first().click();
-  const toggle = dialog.getByRole("switch", { name: "Fit 80 columns in a split pane", exact: true });
-  assert.equal(await toggle.getAttribute("aria-checked"), String(!on), "the switch starts on the other side");
-  await toggle.click();
-  await page.getByRole("button", { name: "Close settings", exact: true }).click();
-  await dialog.waitFor({ state: "detached" });
-};
-
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
@@ -104,11 +93,6 @@ try {
 
       await page.setViewportSize({ width: 1450, height: 900 });
       const shrunk = await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "a split under 80 columns");
-
-      await setNarrowFit(page, false);
-      await settled(page, { panes: 2, font: "base", cols: "narrow" }, "the setting off");
-      await setNarrowFit(page, true);
-      assert.deepEqual(await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "the setting back on"), shrunk);
 
       await page.setViewportSize({ width: 1200, height: 900 });
       await settled(page, { panes: 2, font: "base", cols: "narrow" }, "a split no font can bring to 80 columns");

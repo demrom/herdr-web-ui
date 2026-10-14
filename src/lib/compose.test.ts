@@ -37,6 +37,15 @@ describe("composerMessage and submitNote", () => {
     expect(submitRefusal("input_draft", "x")).toBe(submitNote("input_draft", "x"));
     expect(submitRefusal("agent_blocked", "x", "ㅔ")).toBe(submitNote("agent_blocked", "x"));
   });
+
+  it("offers to send anyway only when the server showed the box and named no draft", () => {
+    expect(submitRefusal("input_draft", "x", undefined, "! ls")).toEqual({ note: "Not sent: Claude Code's input box in the terminal may not be empty. It shows “! ls”.", anyway: true });
+    // a box the server could not read whole is shown nothing to send over: the plain note
+    expect(submitRefusal("input_draft", "x", undefined, "")).toBe(submitNote("input_draft", "x"));
+    // a named draft is cleared, not sent over
+    expect(submitRefusal("input_draft", "x", "ㅔ", "❯ ㅔ")).toEqual({ note: "Not sent: Claude Code's input box in the terminal already holds “ㅔ”.", draft: "ㅔ" });
+    expect(submitRefusal("agent_blocked", "x", undefined, "! ls")).toBe(submitNote("agent_blocked", "x"));
+  });
 });
 
 describe("sameMessage", () => {

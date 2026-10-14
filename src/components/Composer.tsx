@@ -90,14 +90,16 @@ export interface ComposerProps {
    * place (the checkout folder is the branch again, with dashes) and says it is a worktree; null: not one */
   worktreeRepo?: string | null;
   /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
-   * note offers to send again with `clearDraft`, which clears that draft from the terminal first; a
-   * promise settles to any of them */
-  onSend: (text: string, clearDraft?: string) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+   * note offers to send again with `clearDraft`, which clears that draft from the terminal first, or,
+   * where it named none, with `sendAnyway`; a promise settles to any of them */
+  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
 
 const UPLOADS_AT_ONCE = 3;
+/** files one paste, pick or drop takes; the rest are left out with a note */
+const ATTACH_LIMIT = 100;
 /**
  * Any file can be attached (an icon, a PDF, a log): the server stores it beside the pane
  * and the message mentions its path. These image types also get a thumbnail.
@@ -424,7 +426,9 @@ export function Composer({
     setAutoHeight((current) => current === height ? current : height);
   }, [manualHeight]);
 
-  useLayoutEffect(sizeTextarea, [sizeTextarea, text, placeholder, boxWidth, facesLoaded]);
+  // A suggestion or prompt hint changes only the placeholder of a populated draft.
+  // Collapsing it to measure unused placeholder text can scroll iOS's focused caret.
+  useLayoutEffect(sizeTextarea, [sizeTextarea, text, text.length === 0 ? placeholder : null, boxWidth, facesLoaded]);
 
   // SettingsProvider writes --chat-scale in a passive effect. Measure on the next frame,
   // after that CSS is applied, so a draft rewraps without waiting for another keystroke.
@@ -447,9 +451,9 @@ export function Composer({
    * - The model label: measured with everything drawn, then drawn as composerModelDraw says
    *   (the effort word steps out first); measured again without it, a name cut to its floor steps
    *   out whole with its mark (composerLabelDraw), so the ring after it is drawn whole. Stepping
-   *   out is CSS on the mark's attribute, so the label is still read. It runs after every render
-   *   of the composer, which is why the context ring's open number is this component's state:
-   *   opening it takes room from the label without changing the card's size.
+   *   out is CSS on the mark's attribute, so the label is still read. Drawn content changes fit
+   *   the row again: opening the context number takes room from the label without changing
+   *   the card's size.
    * - The sentence is never cut. Where it does not fit beside the model it wraps to a line of its
    *   own (CSS); there it is marked, so it takes the whole line and drops the dot that separated
    *   it from the model. The sentence alone wraps: the rest stays one row (.composer-status-meta),
@@ -458,38 +462,54 @@ export function Composer({
   const fitStatus = useCallback((): void => {
     const status = statusRef.current;
     if (!status) return;
-    status.removeAttribute("data-model");
-    status.removeAttribute("data-hint-alone");
-    status.removeAttribute("data-meta-empty");
-    const clipped = (selector: string): boolean => {
-      const item = status.querySelector<HTMLElement>(selector);
-      return item !== null && item.scrollWidth > item.clientWidth;
-    };
-    const first = composerModelDraw({
-      modelClipped: clipped(".composer-model"),
-      effortClipped: clipped(".composer-reasoning"),
-    });
-    if (first !== "full") status.setAttribute("data-model", first);
-    // with the level stepped out the row is laid out again: a name still cut to its floor (its
-    // min-width, in px once computed) takes the mark and the hairlines out with it
-    const model = status.querySelector<HTMLElement>(".composer-model");
-    const draw = model === null ? first : composerLabelDraw(first, {
-      modelClipped: model.scrollWidth > model.clientWidth,
-      modelWidth: model.clientWidth,
-      modelFloor: parseFloat(getComputedStyle(model).minWidth) || 0,
-    });
-    if (draw !== first) status.setAttribute("data-model", draw);
-    const hint = hintRef.current;
-    if (!hint) return;
-    // with the label stepped out and no ring, the row beside the sentence draws nothing: it gives
-    // up its box, or it would keep an empty line over the sentence
-    const meta = status.querySelector<HTMLElement>(".composer-status-meta")?.getBoundingClientRect();
-    if (!meta || meta.width <= 1) status.setAttribute("data-meta-empty", "");
-    const line = hint.getBoundingClientRect();
-    const beside = meta !== undefined && meta.width > 1 && meta.bottom > line.top && meta.top < line.top + line.height / 2 && meta.right <= line.left + 1;
-    if (!beside) status.setAttribute("data-hint-alone", "");
+    // Fitting temporarily exposes hidden labels and unwraps hints. Keep those measurement
+    // layouts from moving the focused textarea before the final attributes are restored.
+    const surface = surfaceRef.current;
+    const rows = surface?.style.gridTemplateRows ?? "";
+    if (surface) surface.style.gridTemplateRows = getComputedStyle(surface).gridTemplateRows;
+    try {
+      status.removeAttribute("data-model");
+      status.removeAttribute("data-hint-alone");
+      status.removeAttribute("data-meta-empty");
+      const clipped = (selector: string): boolean => {
+        const item = status.querySelector<HTMLElement>(selector);
+        return item !== null && item.scrollWidth > item.clientWidth;
+      };
+      const first = composerModelDraw({
+        modelClipped: clipped(".composer-model"),
+        effortClipped: clipped(".composer-reasoning"),
+      });
+      if (first !== "full") status.setAttribute("data-model", first);
+      // with the level stepped out the row is laid out again: a name still cut to its floor (its
+      // min-width, in px once computed) takes the mark and the hairlines out with it
+      const model = status.querySelector<HTMLElement>(".composer-model");
+      const draw = model === null ? first : composerLabelDraw(first, {
+        modelClipped: model.scrollWidth > model.clientWidth,
+        modelWidth: model.clientWidth,
+        modelFloor: parseFloat(getComputedStyle(model).minWidth) || 0,
+      });
+      if (draw !== first) status.setAttribute("data-model", draw);
+      const hint = hintRef.current;
+      if (!hint) return;
+      // with the label stepped out and no ring, the row beside the sentence draws nothing: it gives
+      // up its box, or it would keep an empty line over the sentence
+      const meta = status.querySelector<HTMLElement>(".composer-status-meta")?.getBoundingClientRect();
+      if (!meta || meta.width <= 1) status.setAttribute("data-meta-empty", "");
+      const line = hint.getBoundingClientRect();
+      const beside = meta !== undefined && meta.width > 1 && meta.bottom > line.top && meta.top < line.top + line.height / 2 && meta.right <= line.left + 1;
+      if (!beside) status.setAttribute("data-hint-alone", "");
+    } finally {
+      if (surface) surface.style.gridTemplateRows = rows;
+    }
   }, []);
-  useLayoutEffect(fitStatus);
+
+  // SettingsProvider applies typography in a passive effect. Fit after those CSS tokens land,
+  // even when the card's total width stays the same, without fitting on streaming renders.
+  useEffect(() => {
+    const frame = requestAnimationFrame(fitStatus);
+    return () => cancelAnimationFrame(frame);
+  }, [fitStatus, settings.uiFontSize,
+    settings.chatFontSize, settings.chatFontFamily, settings.density]);
 
   // the card's own width decides, not the window's: a sidebar or a narrow lane shrinks the card
   // in a wide window. Measured before the first paint, so a phone never draws the words first.
@@ -499,9 +519,13 @@ export function Composer({
     const surface = surfaceRef.current;
     if (!surface) return;
     let frame = 0;
-    setCardWidth(Math.round(surface.getBoundingClientRect().width));
+    let width = Math.round(surface.getBoundingClientRect().width);
+    setCardWidth(width);
     const observer = new ResizeObserver(() => {
-      setCardWidth(Math.round(surface.getBoundingClientRect().width));
+      const next = Math.round(surface.getBoundingClientRect().width);
+      if (next === width) return;
+      width = next;
+      setCardWidth(width);
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(fitStatus);
     });
@@ -779,12 +803,12 @@ export function Composer({
 
   const uploadImages = useCallback(
     (incoming: readonly File[]) => {
-      const images = incoming.slice(0, settings.attachLimit);
+      const images = incoming.slice(0, ATTACH_LIMIT);
       if (images.length === 0) return;
 
       // the files left out of this pick: told now, and again beside an upload error of this batch
       const leftOut = images.length < incoming.length
-        ? t("Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
+        ? t("Only the first {count} of {total} files were taken.", { count: images.length, total: incoming.length })
         : null;
       const added = images.map<Attachment>((file) => {
         const uploadFile = normalizeComposerImageFile(file);
@@ -804,7 +828,7 @@ export function Composer({
       uploadQueue.current.push(...added);
       pumpUploads();
     },
-    [pumpUploads, settings.attachLimit, t],
+    [pumpUploads, t],
   );
 
   const removeAttachment = useCallback((attachment: Attachment) => {
@@ -827,8 +851,9 @@ export function Composer({
     }
   }, [placeWaitingMentions]);
 
-  /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over */
-  const send = useCallback((clearDraft?: string) => {
+  /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
+   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it */
+  const send = useCallback((clearDraft?: string, sendAnyway = false) => {
     if (composingRef.current) return;
     if (!connected || uploading || roomless || sending || text.trim().length === 0) return;
     const sent = text;
@@ -852,7 +877,7 @@ export function Composer({
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
-      const result = onSend(text, clearDraft);
+      const result = onSend(text, clearDraft, sendAnyway);
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
@@ -985,9 +1010,15 @@ export function Composer({
     : hint === "no-room" ? t("No room for {file}: remove {count} characters", { file: roomless?.file.name ?? "", count: roomless?.missing ?? 0 })
     : hint === "near-limit" ? t("{count} characters left", { count: MAX_COMPOSER_CHARS - text.length })
     : t(hint === "uploading" ? "Uploading file…" : "Reconnecting… message held here, never queued");
-  /** the strip under the card: the folder and the branch the caller knows; none, or turned off, no strip */
-  const strip = settings.showComposerStrip ? composerStrip({ cwd, branch, repo: worktreeRepo }) : null;
+  /** the strip under the card: the folder and the branch the caller knows; none, no strip */
+  const strip = composerStrip({ cwd, branch, repo: worktreeRepo });
   const worktree = worktreeRepo !== null;
+  // Fit only changes to drawn content. Streaming context usage is a fixed-size ring unless
+  // its number is open on desktop; transcript/status refreshes need no measurement layout.
+  useLayoutEffect(fitStatus, [fitStatus, agent, metadata?.model, metadata?.reasoning_effort,
+    metadata?.context?.window, contextShown && !mobile && metadata?.context ? contextLeftPercent(metadata.context) : null,
+    contextShown, mobile, usageCaption, usage?.problem, hintText, dictation.shown, backgroundTasks,
+    plan?.done, plan?.total, statusCompact, compactNow !== undefined, facesLoaded, t]);
   const menuId = `composer-menu-${paneId}`;
   // the arrow keys move the selection, not the focus (it stays in the box), so the browser does not scroll to it
   useEffect(() => {
@@ -998,8 +1029,8 @@ export function Composer({
     <div className={`composer${notices ? " has-notices" : ""}`} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
       {greeting}
       {notices}
-      {/* no Tab key on a phone: the suggestion is a chip there that fills the box, unless Settings turns it off */}
-      {settings.showSuggestionChip && offered !== null && text === "" && (
+      {/* no Tab key on a phone: the suggestion is a chip there that fills the box */}
+      {offered !== null && text === "" && (
         <div className="composer-quick composer-suggestion-row">
           <button type="button" className="composer-quick-reply composer-suggestion" title={t("Use the suggestion")} onClick={() => setTextAndCaret(offered, offered.length)}>
             <span aria-hidden="true">↹ </span>{offered}
@@ -1029,9 +1060,10 @@ export function Composer({
         <div className={`composer-note${typeof note === "object" ? " composer-note-offer" : ""}`} role="alert">
           <TriangleAlert className="composer-note-icon" aria-hidden="true" />
           <span className="composer-note-text">{typeof note === "string" ? note : note.note}</span>
-          {/* the draft named above, never what has replaced it since: the server checks */}
+          {/* the draft named above, never what has replaced it since: the server checks; a box it could
+              not tell empty, sent over only in the same Claude terminal the refusal was for */}
           {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
-            onClick={() => send(note.draft)}>{t("Clear it and send")}</button>}
+            onClick={() => "draft" in note ? send(note.draft) : send(undefined, true)}>{"draft" in note ? t("Clear it and send") : t("Send anyway")}</button>}
         </div>
       )}
 
@@ -1154,9 +1186,11 @@ export function Composer({
           aria-controls={menuOpen ? menuId : undefined}
           aria-expanded={menuOpen}
           aria-activedescendant={menuOpen ? `${menuId}-${selectedIndex}` : undefined}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
+          // most of what is typed to an agent is prose: a phone keyboard's corrections, suggestions
+          // and sentence capitals stay on here (the terminal input line keeps them off)
+          spellCheck
+          autoCapitalize="sentences"
+          autoCorrect="on"
           // stays editable while the socket reconnects (sending waits for it): a phone's
           // dictation keyboard opens its own app and comes back, the socket may drop meanwhile,
           // and a disabled box would lose its focus and the dictated text with it
