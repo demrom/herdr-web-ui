@@ -39,12 +39,19 @@ export function submitNotTyped(code: string): boolean {
     "held_input"].includes(code);
 }
 
-/** A send refused over a one-row draft in Claude's terminal input box: the note, and the draft a send may clear first. */
-export interface DraftRefusal { note: string; draft: string }
+/**
+ * A send refused over Claude's terminal input box: the note, and either the one-row draft a send may
+ * clear first (`draft`), or, where the server named none but showed the box, a send anyway (`anyway`).
+ */
+export type DraftRefusal = { note: string; draft: string } | { note: string; anyway: true };
 
-/** submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`). */
-export function submitRefusal(code: string, message: string, draft?: string): string | DraftRefusal {
+/**
+ * submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`)
+ * or showed a box it could not tell empty (`box`; empty when it could not read one whole).
+ */
+export function submitRefusal(code: string, message: string, draft?: string, box?: string): string | DraftRefusal {
   if (code === "input_draft" && draft) return { note: t("Not sent: Claude Code's input box in the terminal already holds “{draft}”.", { draft }), draft };
+  if (code === "input_draft" && box) return { note: t("Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.", { box }), anyway: true };
   return submitNote(code, message);
 }
 

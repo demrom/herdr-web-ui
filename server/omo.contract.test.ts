@@ -47,7 +47,15 @@ it("labels a running omo pane when herdr supplies no agent kind", async () => {
   try {
     expect(snapshot.panes.find((entry) => entry.pane_id === paneId)?.agent).toBeUndefined();
 
-    const labelled = await labelOmoPanes(snapshot);
+    // The fixture's process marker and the label probe are separate herdr reads.
+    // Wait for the label itself, keeping the original unlabelled snapshot for both checks.
+    const deadline = Date.now() + 5_000;
+    let labelled = await labelOmoPanes(snapshot);
+    while (labelled.panes.find((entry) => entry.pane_id === paneId)?.agent !== "omo") {
+      if (Date.now() >= deadline) throw new Error("test omo process was not labelled");
+      await Bun.sleep(50);
+      labelled = await labelOmoPanes(snapshot);
+    }
 
     expect(labelled.panes.find((entry) => entry.pane_id === paneId)?.agent).toBe("omo");
     expect(snapshot.panes.find((entry) => entry.pane_id === paneId)?.agent).toBeUndefined();
