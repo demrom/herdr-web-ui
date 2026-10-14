@@ -39,6 +39,7 @@ import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
@@ -331,6 +332,7 @@ function AppearancePage() {
 function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
+  const touch = useMediaQuery("(pointer: coarse)");
   return (
     <>
       <SettingsGroup>
@@ -363,8 +365,8 @@ function ChatPage() {
         <SettingsRow label={t("PageUp / PageDown scroll chat")} description={t("Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.")}>
           <Toggle label={t("PageUp / PageDown scroll chat")} checked={settings.chatPageKeys} onChange={(chatPageKeys) => update({ chatPageKeys })} />
         </SettingsRow>
-        <SettingsRow label={t("Enter sends")} description={t("When off, Mod+Enter sends")}>
-          <Toggle label={t("Enter sends")} checked={settings.enterSends} onChange={(enterSends) => update({ enterSends })} />
+        <SettingsRow label={touch ? t("Return inserts a new line") : t("Enter sends")} description={touch ? t("When on, use Send or hardware Mod+Enter to send.") : t("When off, Mod+Enter sends")}>
+          <Toggle label={touch ? t("Return inserts a new line") : t("Enter sends")} checked={touch ? !settings.enterSends : settings.enterSends} onChange={(checked) => update({ enterSends: touch ? !checked : checked })} />
         </SettingsRow>
         <SettingsRow label={t("Files at once")} description={t("How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.")}>
           <Stepper label={t("Files at once")} value={settings.attachLimit} text={String(settings.attachLimit)} min={ATTACH_LIMIT_MIN} max={ATTACH_LIMIT_MAX} decreaseLabel={t("Attach fewer files at once")} increaseLabel={t("Attach more files at once")} onChange={(attachLimit) => update({ attachLimit })} />

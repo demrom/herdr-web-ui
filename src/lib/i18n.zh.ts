@@ -109,6 +109,8 @@ export const ZH: Record<string, string> = {
   "Comma-separated, tried in order. A font this device does not have falls back to the default.": "以逗号分隔，按顺序使用。此设备上没有的字体会回退到默认字体。",
   "Composer": "输入框",
   "Enter sends": "按 Enter 发送",
+  "Return inserts a new line": "按 Return 换行",
+  "When on, use Send or hardware Mod+Enter to send.": "开启后，点击发送按钮或使用实体键盘按 Mod+Enter 发送。",
   "When off, Mod+Enter sends": "关闭后按 Mod+Enter 发送",
   "Files at once": "每次附加的文件数",
   "How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.": "一次粘贴、选择或拖放附加的文件数。其余文件不会附加，消息框会显示数量。",

@@ -105,6 +105,8 @@ export const TR: Record<string, string> = {
   "Comma-separated, tried in order. A font this device does not have falls back to the default.": "Virgülle ayrılmış, sırayla denenir. Bu cihazda bulunmayan bir yazı tipi varsayılana düşer.",
   "Composer": "Mesaj yazma alanı",
   "Enter sends": "Enter gönderir",
+  "Return inserts a new line": "Return yeni satır ekler",
+  "When on, use Send or hardware Mod+Enter to send.": "Açıkken Gönder düğmesiyle veya fiziksel klavyede Mod+Enter ile gönderin.",
   "When off, Mod+Enter sends": "Kapalıyken Mod+Enter gönderir",
   "Files at once": "Tek seferde dosya",
   "How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.": "Bir yapıştırma, seçim veya bırakmanın eklediği dosya sayısı. Kalanlar eklenmez ve mesaj kutusu kaç tane olduğunu söyler.",
