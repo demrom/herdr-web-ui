@@ -157,6 +157,49 @@ retried automatically. The restart gate waits for the interrupted turn's readine
 by the new turn's working/ready cycle. If Codex never exposes that cycle, remaining messages
 are held for explicit review.
 
+## OmO runtime recognition
+
+A pane runs OmO when its foreground processes prove it. The first proof is the program
+itself (`isOmoProcess`): omo's own binary, the omo-ai script a JS runtime runs, the
+claude-sdk child, or a hoisted senpi entry loading omo-ai's plugin.
+
+A launcher whose own argv says nothing — a renamed entrypoint, a profile wrapper — is
+recognized only by native session ownership, verified read-only on every lookup
+(`omoProcessIdentity`):
+
+- its environment as it was at `exec` resolves to an OmO store: an explicit
+  `OMO_CODING_AGENT_DIR` entry (an empty value still means the default), or no entry at
+  all so the store stays the default `~/.omo/agent`. A store moved only by
+  `SENPI_CODING_AGENT_DIR` or `PI_CODING_AGENT_DIR` is not an OmO identity;
+- the OS reports a live start time for the exact pid, and the store's
+  `sessions/<cwd-slug>/session-holders/` keeps a holder record naming that pid, a
+  matching `processStartedAtMs` and the process's own cwd.
+
+An environment marker alone, an argv mention, a stale or reused pid, a foreign cwd or
+an unreadable start never identify a custom OmO, and a custom runtime never falls back
+to cwd/time inference, file mtimes or launch hints — only its current holders bind it,
+so `/new` reports the pending held id and releasing a holder never resurrects an older
+transcript. Binding is per owning store: a held or reported session id, a pending check
+and an open descriptor match only inside the canonical stores that pane's own processes
+resolved, so the same id in two stores stays two independent sessions and two panes
+claiming one file fail closed. A held claim survives a missing or unreadable session
+file with its store scope intact — a broken header never resolves to another store's
+same-id file, and a holder whose own store cannot be resolved claims nothing.
+
+The folder a pane binds is the one its OmO processes actually run in: a process-reported
+cwd wins over the pane's `foreground_cwd`/`cwd`, which count only when no process reports
+(`omoTranscriptsOfCwd`, `omoSessionForPane` and `omoPanes` resolve it the same way, and
+same-cwd peers are the panes resolving to that folder, not the ones sharing a stale pane
+cwd). A pane whose holders run in two different cwds is ambiguous and selects nothing.
+
+The process evidence lives in `/proc`: a launcher argv does not identify is verifiable
+only where `/proc/<pid>/environ` and `/proc/<pid>/cwd` (or a reported process cwd) are
+readable — Linux today; on macOS or Windows such a launcher stays unrecognized until
+its argv is added to `isOmoProcess`. A custom launcher must therefore set the store in
+the child's environment before `exec` (`OMO_CODING_AGENT_DIR=… my-launcher`): a
+variable the process sets only in-process later may never appear in
+`/proc/<pid>/environ`, which reports the environment the kernel recorded at `exec`.
+
 ## Conversation refresh
 
 The chat reads `/api/pane/conversation` after a `conversation-changed` WebSocket frame.

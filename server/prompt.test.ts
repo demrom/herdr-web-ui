@@ -3138,7 +3138,7 @@ ${omoRule}
       const path = join(dir, "2026-10-06T00-00-00_qa-session-488.jsonl");
       writeFileSync(path, JSON.stringify({ type: "session", id: "qa-session-488", cwd: pane.cwd, timestamp: new Date().toISOString() }) + "\n" + omoCall("q1", options));
       // An inert child supplies a real process environment; all RPCs and session files are fixtures.
-      const child = Bun.spawn([process.execPath, "-e", "process.stdin.resume()"], { stdin: "pipe", stdout: "ignore", stderr: "ignore", env: { ...process.env, OMO_CODING_AGENT_DIR: agentDir } });
+      const child = Bun.spawn([process.execPath, "-e", "process.stdin.resume()"], { cwd: pane.cwd, stdin: "pipe", stdout: "ignore", stderr: "ignore", env: { ...process.env, OMO_CODING_AGENT_DIR: agentDir } });
       pane.omo = { pid: child.pid, path, live: true };
       promptWaitEnded("p_1");
       try { await run(pane); }

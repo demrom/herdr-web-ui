@@ -1302,6 +1302,9 @@ export function Composer({
               title={sending ? t("Sending…") : t("Send message")}
               aria-busy={sending || undefined}
               disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+              // focus stays in the text box: leaving it closes the soft keyboard and moves the button
+              // out from under the tap before the click lands
+              onPointerDown={(event) => event.preventDefault()}
               onClick={() => send()}
             >
               {sending ? <LoaderCircle className="composer-send-progress" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}

@@ -547,6 +547,22 @@ try {
       });
       console.log("PASS the message box follows Chat font size: with a mouse at the transcript's size, on a phone never under 16px");
 
+      // Pressing Send leaves focus in the message box. On a phone, moving it closes the soft keyboard
+      // and shifts the layout, so the tap never lands as a click. Press and release away from the
+      // button, so nothing is sent.
+      for (const width of [390, 1440]) await withCard(browser, width, { model: "claude-opus-5-5" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await box.fill("a draft that stays");
+        const bounds = (await page.getByRole("button", { name: "Send message", exact: true }).boundingBox())!;
+        await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+        await page.mouse.down();
+        assert.equal(await box.evaluate((node) => node === document.activeElement), true, `${width}px: pressing Send keeps the message box focused`);
+        await page.mouse.move(0, 0);
+        await page.mouse.up();
+        assert.equal(await box.inputValue(), "a draft that stays", "nothing was sent");
+      });
+      console.log("PASS pressing Send keeps focus in the message box");
+
       // Changing the setting in an already-open chat rewraps the existing draft: an automatic
       // box grows and shrinks with it, while a height chosen with the grip stays chosen.
       for (const width of [390, 1440]) await withCard(browser, width, { model: "claude-opus-5-5" }, async (page) => {

@@ -43,7 +43,7 @@ import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, cod
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import { forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
-import { isOmoProcess, omoSessionForPane } from "./omo.ts";
+import { omoProcessIdentity, omoSessionForPane } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
 import { ompHeldTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
@@ -1113,12 +1113,18 @@ export async function gjcTranscriptPath(paneId: string, cwd: string, home?: stri
 export async function paneRunsOmo(paneId: string): Promise<boolean> {
   // pane.process_info wants `pane_id`; given `target` herdr answers for the
   // FOCUSED pane instead of erroring (live-verified 2026-09-21).
-  const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: unknown }[] } }>(
+  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown; argv?: unknown; cwd?: unknown }[] } }>(
     "pane.process_info",
     { pane_id: paneId },
   ).catch(() => null);
+  const home = process.env["HOME"] ?? "";
   return (info?.process_info?.foreground_processes ?? []).some((process) =>
-    isOmoProcess(Array.isArray(process.argv) ? process.argv.map(String) : []),
+    // a pid herdr does not report keeps the argv-only proof and fails the custom one closed
+    omoProcessIdentity({
+      pid: typeof process.pid === "number" ? process.pid : -1,
+      argv: Array.isArray(process.argv) ? process.argv.map(String) : undefined,
+      cwd: typeof process.cwd === "string" && process.cwd ? process.cwd : undefined,
+    }, "", home) !== null,
   );
 }
 
@@ -1129,7 +1135,7 @@ export async function paneRunsOmo(paneId: string): Promise<boolean> {
  * (paneRunsOmo), including panes herdr has not recognized as an agent.
  */
 export async function labelOmoPanes(snapshot: SessionSnapshot): Promise<SessionSnapshot> {
-  const candidates = snapshot.panes.filter((pane) => !pane.agent || pane.agent === "pi" || pane.agent === "claude");
+  const candidates = snapshot.panes;
   const omo = new Set<string>();
   await Promise.all(candidates.map(async (pane) => { if (await paneRunsOmo(pane.pane_id)) omo.add(pane.pane_id); }));
   if (omo.size === 0) return snapshot;
@@ -1271,7 +1277,7 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
     );
     if (running || await gjcPidUnderShell(info?.process_info?.shell_pid)) agent = "gjc";
   }
-  if ((agent === "omo" || agent === "pi" || agent === "claude") && await paneRunsOmo(paneId)) {
+  if (await paneRunsOmo(paneId)) {
     return { source: "omo-transcript", path: await omoTranscriptPath(paneId, cwd, panes) };
   }
   // omp and GJC can change their own cwd without changing the pane's shell directory; their
@@ -1388,7 +1394,7 @@ export async function paneTranscript(paneId: string, codexHome?: string, snapsho
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
 
-  if (pane.agent === "devin") {
+  if (pane.agent === "devin" && !(await paneRunsOmo(paneId))) {
     const cwd = pane.foreground_cwd || pane.cwd;
     const storePath = devinDbPath ?? defaultDevinDbPath();
     const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: unknown }[] } }>(
