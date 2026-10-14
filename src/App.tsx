@@ -1014,6 +1014,9 @@ export function App() {
     const inside = !!box && !!point && point.x >= box.left && point.x < box.right && point.y >= box.top && point.y < box.bottom;
     showDropTarget(box && point && inside ? dropSide(point.x, box.left, box.width, dropAtRef.current) : null);
   }, [tabDrag, splitDragOn, showDropTarget]);
+  // dragenter too: a drop hit-tests once more, and when the node under the pointer was replaced since
+  // the last dragover (xterm redraws its rows, a transcript renders again) the new node gets a
+  // dragenter instead. Chromium refuses a drop whose last drag event nobody accepted.
   const paneDragOver = (event: DragEvent<HTMLDivElement>): void => {
     if (!splitDragOn || !event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
     event.preventDefault();
@@ -1506,7 +1509,7 @@ export function App() {
         {health?.lan_exposure && <LanExposureNotice host={health.lan_exposure.host} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {/* the pane's tab, or two tabs side by side (lib/split.ts): a tab dragged down out of its strip,
             or a sidebar row dragged over this area, opens its pane in the half it is dropped on */}
-        <div ref={paneAreaRef} className={`pane-split${splitOn ? " is-split" : ""}`} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
+        <div ref={paneAreaRef} className={`pane-split${splitOn ? " is-split" : ""}`} onDragEnterCapture={paneDragOver} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
           {(["a", "b"] as const).map((slot) => {
             // one pane: the solo slot, or a split's active half where the window is too narrow for both
             if (!splitOn && slot !== (split ? split.active : soloSlot)) return null;
