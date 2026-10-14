@@ -98,10 +98,17 @@ describe("skills and plugins", () => {
       { name: "prompts:review", description: "Shared review", source: "user" },
       { name: "prompts:team:check", description: "Shared check", source: "user" },
     ]);
-    expect(paneCommands("pi", null, home).filter((command) => command.source !== "builtin")).toEqual([
-      { name: "skill:linked", description: "Shared skill", source: "skill" },
-      { name: "skill:linked", description: "Shared skill", source: "skill" },
-    ]);
+    const previousPiAgentDir = process.env["PI_CODING_AGENT_DIR"];
+    process.env["PI_CODING_AGENT_DIR"] = join(home, ".pi", "agent");
+    try {
+      expect(paneCommands("pi", null, home).filter((command) => command.source !== "builtin")).toEqual([
+        { name: "skill:linked", description: "Shared skill", source: "skill" },
+        { name: "skill:linked", description: "Shared skill", source: "skill" },
+      ]);
+    } finally {
+      if (previousPiAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+      else process.env["PI_CODING_AGENT_DIR"] = previousPiAgentDir;
+    }
   });
 
   it("offers Claude's skills, user and project, and the enabled plugins' skills and commands", () => {
