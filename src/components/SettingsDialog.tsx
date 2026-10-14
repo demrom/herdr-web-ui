@@ -356,8 +356,12 @@ function ChatPage() {
     const parsed = Number(cacheLimit);
     const value = cacheLimit.trim() && Number.isFinite(parsed) ? Math.min(10000, Math.max(1, Math.floor(parsed))) : settings.chatHistoryCacheMB;
     setCacheLimit(String(value));
-    update({ chatHistoryCacheMB: value });
+    if (value !== settings.chatHistoryCacheMB) update({ chatHistoryCacheMB: value });
   };
+  // Escape closes the dialog without blurring the field.
+  const commitCacheLimitRef = useRef(commitCacheLimit);
+  commitCacheLimitRef.current = commitCacheLimit;
+  useEffect(() => () => commitCacheLimitRef.current(), []);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => { void historyCacheUsage().then((next) => { if (!cancelled) setUsage(next); }); };
@@ -391,7 +395,7 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("Chat history cache")} section="history-cache" note={<>{t("Saved chats may contain sensitive information. Turning this off pauses caching and keeps saved chats. Clear cache, signing out or changing authentication erases them.")} {usage !== undefined && !("unavailable" in usage) && usage.oversized > 0 && <span role="status">{t("Some chats exceed this limit and are not saved. Raise the limit and reopen them to cache their full history.")}</span>}</>}>
-        <SettingsRow label={t("Cache chat history on this device")} description={t("Save full history for scrolling and search. Reopen saved chats immediately when their agent session is known, then check for changes. Off by default.")}>
+        <SettingsRow label={t("Cache chat history on this device")} description={t("Save full history for scrolling. Reopen saved chats immediately when their agent session is known, then check for changes. Off by default.")}>
           <Toggle label={t("Cache chat history on this device")} checked={settings.chatHistoryCache} onChange={(chatHistoryCache) => update({ chatHistoryCache })} />
         </SettingsRow>
         <SettingsRow label={t("Maximum chat cache (MB)")} htmlFor="chat-cache-limit" description={t("The least recently opened chats are removed first. Browser storage limits may be lower.")} wide>
