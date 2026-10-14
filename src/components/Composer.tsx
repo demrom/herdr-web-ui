@@ -506,7 +506,7 @@ export function Composer({
   useEffect(() => {
     const frame = requestAnimationFrame(fitStatus);
     return () => cancelAnimationFrame(frame);
-  }, [fitStatus, settings.uiFontSize, settings.uiFontFamily, settings.codeFontFamily,
+  }, [fitStatus, settings.uiFontSize,
     settings.chatFontSize, settings.chatFontFamily, settings.density]);
 
   // the card's own width decides, not the window's: a sidebar or a narrow lane shrinks the card
