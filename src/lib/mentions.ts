@@ -19,8 +19,8 @@ function tokenEnd(text: string, from: number): number {
 }
 
 /**
- * Finds the completion token at the caret. Slash commands only begin a line; file mentions
- * may begin anywhere; with `skills`, so may a `$skill` (Codex's own way to name one).
+ * Finds the completion token at the caret. `/` begins a word; the caller limits later tokens
+ * to skills its agent honours there. With `skills`, `$skill` also completes (Codex's syntax).
  */
 export function activeTrigger(text: string, caret: number, options: { skills?: boolean } = {}): ActiveTrigger | null {
   if (!Number.isInteger(caret) || caret < 0 || caret > text.length) return null;
@@ -33,10 +33,11 @@ export function activeTrigger(text: string, caret: number, options: { skills?: b
       return { kind: "slash", prefix: "$", query, start: dollar, end: tokenEnd(text, caret) };
     }
   }
-  if (text[lineStart] === "/") {
-    const query = text.slice(lineStart + 1, caret);
+  const slash = text.lastIndexOf("/", Math.max(0, caret - 1));
+  if (slash >= lineStart && (slash === 0 || /\s/u.test(text[slash - 1] ?? ""))) {
+    const query = text.slice(slash + 1, caret);
     if (SLASH_QUERY.test(query)) {
-      return { kind: "slash", query, start: lineStart, end: tokenEnd(text, caret) };
+      return { kind: "slash", query, start: slash, end: tokenEnd(text, caret) };
     }
   }
 
@@ -47,12 +48,14 @@ export function activeTrigger(text: string, caret: number, options: { skills?: b
   return { kind: "file", query, start: at, end: tokenEnd(text, caret) };
 }
 
-/** Replaces exactly the active token and returns the caret position after the inserted completion. */
+/** Replaces exactly the active token and returns the caret position after the inserted completion.
+ * A completion's trailing space reuses the space already after the token instead of doubling it. */
 export function applyCompletion(
   text: string,
   trigger: ActiveTrigger,
   replacement: string,
 ): { text: string; caret: number } {
-  const next = text.slice(0, trigger.start) + replacement + text.slice(trigger.end);
-  return { text: next, caret: trigger.start + replacement.length };
+  const after = text.slice(trigger.end);
+  const inserted = replacement.endsWith(" ") && after.startsWith(" ") ? replacement.slice(0, -1) : replacement;
+  return { text: text.slice(0, trigger.start) + inserted + after, caret: trigger.start + replacement.length };
 }
