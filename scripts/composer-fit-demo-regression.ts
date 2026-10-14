@@ -245,8 +245,14 @@ try {
             await openSettingsPage(page, "Appearance");
             await page.getByRole("button", { name: theme === "dark" ? "Dark" : "Light", exact: true }).click();
             await openSettingsPage(page, "Chat");
-            await toggle.scrollIntoViewIfNeeded();
             await appFaces(page);
+            await page.locator(".settings-row").filter({ has: toggle }).evaluate((row) => row.scrollIntoView({ block: "center", behavior: "instant" }));
+            const capture = await toggle.evaluate((node) => {
+              const row = node.closest(".settings-row")!.getBoundingClientRect();
+              const body = node.closest(".settings-body")!.getBoundingClientRect();
+              return { top: row.top, bottom: row.bottom, visibleTop: body.top, visibleBottom: Math.min(body.bottom, window.innerHeight) };
+            });
+            assert.ok(capture.top >= capture.visibleTop - 1 && capture.bottom <= capture.visibleBottom + 1, `the phone capture includes the whole Return setting and its explanation: ${JSON.stringify(capture)}`);
             await page.screenshot({ path: join(evidence, `return-newline-phone-${theme}.png`) });
           }
         }
