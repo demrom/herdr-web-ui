@@ -171,6 +171,55 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
     assert.ok(Number(phoneSize.split(" ")[1]) < Number(desktopSize.split(" ")[1]), `phone ${phoneSize} narrower than desktop ${desktopSize}`);
     console.log(`PASS the phone's terminal lens fits the grid to ${phoneSize}`);
 
+    // Regression (#1085): a window blur is not a hidden terminal. Its grid must remain
+    // eligible when the phone leaves the terminal, without changing blur's reconnect policy.
+    const blurMark = (await framesOf(desktop)).length;
+    await phone.bringToFront();
+    await desktop.evaluate(() => {
+      if (document.visibilityState !== "visible") throw new Error("desktop must stay visible");
+      // Headless contexts each retain focus; model the OS window blur without hiding the page.
+      Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
+      window.dispatchEvent(new Event("blur"));
+    });
+    assert.equal((await framesOf(desktop)).slice(blurMark)
+      .filter((f) => f.dir === "out" && f.type === "release-size").length, 0,
+    "a visible desktop blur does not release its grid");
+    await desktop.evaluate(([rows, cols]) => {
+      const socket = (window as unknown as { socket_: WebSocket }).socket_;
+      let finish: (time: number) => void;
+      // A deadline resolves to Infinity so a late delivery fails without an unhandled rejection.
+      const restored = new Promise<number>((resolve) => { finish = resolve; });
+      Object.assign(window, { gridRestored_: restored });
+      const timer = window.setTimeout(() => {
+        socket.removeEventListener("message", receive);
+        finish(Infinity);
+      }, 5_000);
+      function receive(event: MessageEvent): void {
+        const frame = JSON.parse(String(event.data));
+        if (frame.type !== "pane-geometry" || frame.rows !== rows || frame.cols !== cols) return;
+        window.clearTimeout(timer);
+        socket.removeEventListener("message", receive);
+        finish(Date.now());
+      }
+      socket.addEventListener("message", receive);
+    }, desktopSize.split(" ").map(Number));
+    const chatAt = Date.now();
+    await phone.locator('button[title^="Chat transcript"]').tap();
+    const restoredAt = await desktop.evaluate(() => (window as unknown as { gridRestored_: Promise<number> }).gridRestored_);
+    assert.ok(restoredAt - chatAt <= 1_000, "phone Chat restores the visible desktop grid within 1 s");
+    // pane-geometry announces the resize before the sidecar applies it to herdr's pty.
+    // Read shell replies within the same 1 s budget, rather than racing the sidecar once.
+    let restoredSize = "";
+    while (Date.now() < chatAt + 1_000 && restoredSize !== desktopSize) restoredSize = await size();
+    assert.equal(restoredSize, desktopSize, "the unfocused desktop's grid is restored in the real pty");
+    assert.ok(Date.now() - chatAt <= 1_000, "the real pty restores the desktop grid within 1 s");
+    console.log(`PASS phone Chat restores the visible unfocused desktop's ${desktopSize}`);
+    await phone.locator('button[title^="Live terminal"]').tap();
+    let reclaimedSize = "";
+    const reclaimDeadline = Date.now() + 10_000;
+    while (Date.now() < reclaimDeadline && reclaimedSize !== phoneSize) reclaimedSize = await size();
+    assert.equal(reclaimedSize, phoneSize, "returning to the phone terminal still reclaims its grid");
+
     // the desktop's terminal lens ignored that resize: it drives the grid itself. Entering the chat
     // lens, its hidden screen takes the grid the pty has now, since what the chat reads there (a
     // masked prompt) is drawn for the phone's grid. xterm's DOM renderer keeps one element a row.

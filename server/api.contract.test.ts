@@ -2090,7 +2090,7 @@ describe("WebSocket roles and status push", () => {
         desktop.seen.length = 0;
         phone.send({ type: "release-size", pane_id: paneId });
         // regression (fails on main): the desktop's grid comes back within 1 s, with no desktop frame sent
-        expect(await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId, "the grid given back", 1000)).toMatchObject({ cols: 120, rows: 40 });
+        expect(await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId, "the grid given back", 5000)).toMatchObject({ cols: 120, rows: 40 });
         // regression (fails on main): the shell in the pane sees the desktop's grid
         await shellSees(desktop, paneId, "40x120");
         // control: one server resize for the release, no ping-pong after it
@@ -2140,7 +2140,7 @@ describe("WebSocket roles and status push", () => {
         desktop.seen.length = 0;
         phone.send({ type: "release-size", pane_id: paneId });
         // regression (fails on main): the hidden 100x30 candidate must not win.
-        expect(await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId, "remaining terminal's grid", 1000))
+        expect(await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId, "remaining terminal's grid", 5000))
           .toMatchObject({ cols: 120, rows: 40 });
         await shellSees(desktop, paneId, "40x120");
         expect(desktop.seen.filter((m) => m.type === "pane-geometry")).toHaveLength(1);

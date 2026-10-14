@@ -1019,7 +1019,6 @@ export const ZH: Record<string, string> = {
   "Move tab left": "向左移动标签页",
   "Move tab right": "向右移动标签页",
   "Tab order did not refresh. Try again.": "标签页顺序未更新，请重试。",
-  "Terminal scrollback": "终端历史",
   "Scroll failed: {reason}": "滚动失败：{reason}",
   "Plan: {done} of {total} done": "计划：已完成 {done}/{total}",
   "Plan": "计划",

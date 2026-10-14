@@ -1,4 +1,5 @@
 import { shouldSyncViewportOnResume } from "./viewportResume.ts";
+import { keyboardViewportReference } from "./keyboard.ts";
 
 /*
  * Sizes the shell to the VISUAL viewport. When the soft keyboard opens, iOS
@@ -63,12 +64,12 @@ const syncKeyboard = (): void => {
   const height = viewport?.height ?? window.innerHeight;
   const large = largeViewport.getBoundingClientRect().height;
   const remembered = unobstructedHeights.get(width);
-  const resizedWindow = remembered && large < remembered.large && height < large && large - height <= large * 0.2;
-  const reference = Math.max(large, resizedWindow ? 0 : remembered?.height ?? 0, window.innerHeight);
   const focused = touch.matches && typing(document.activeElement);
-  const visible = (focused || root.hasAttribute("data-keyboard")) && ((keyboard?.boundingRect.height ?? 0) > 0
+  const keyboardActive = focused || root.hasAttribute("data-keyboard");
+  const reference = keyboardViewportReference(height, large, window.innerHeight, remembered, keyboardActive);
+  const visible = keyboardActive && ((keyboard?.boundingRect.height ?? 0) > 0
     || !!viewport && viewport.scale === 1 && reference - height > reference * 0.2);
-  if (!visible) unobstructedHeights.set(width, { large, height: resizedWindow ? Math.max(large, height, window.innerHeight) : Math.max(reference, height) });
+  if (!visible) unobstructedHeights.set(width, { large, height: Math.max(reference, height) });
   root.toggleAttribute("data-keyboard", visible);
   if (visible && viewport) root.style.setProperty("--app-height", `${Math.round(height)}px`);
   else {

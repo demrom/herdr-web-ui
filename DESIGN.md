@@ -1414,22 +1414,22 @@ One set for both themes: the card is island black wherever it shows.
 - Automatic refresh uses `jump:false` only after an explicit search response includes both
   `matches` and `scroll`. Older bridges can ignore unknown request fields, so they receive no
   automatic search POST. Their explicit count and previous/next navigation remain unchanged.
-  Read-only views also send no automatic search POST and cannot drag the history scrollbar.
-- The separate history scrollbar sits in a reserved gutter alongside the grid and is hidden
-  when herdr reports no scrollback. Dragging the thumb, clicking the track or its focused arrows,
-  Page Up/Down and Home/End call `pane.scroll`; this moves the shared viewport for every client,
-  including the TUI. Pending pointer moves are coalesced, requests retain their owning PC/pane,
-  and a failed request displays an error instead of inventing a local history position.
+  Read-only views also send no automatic search POST and cannot page native history.
+- The terminal draws no history scrollbar and reserves no gutter for one: the grid takes the
+  mount's full width. Wheel, touch drag, page keys and Find move native history; paging calls
+  `pane.scroll`, which moves the shared viewport for every client, including the TUI. Requests
+  retain their owning PC/pane, and a failed request displays an error instead of inventing a
+  local history position.
 - Mod+Shift+PageUp/PageDown pages the selected pane only, preserving chat composer focus and
   selection. Chat moves instantly by its viewport minus one prose line;
-  Terminal and focused scrollbar PageUp/PageDown use native viewport rows minus one. A page still
+  Terminal uses native viewport rows minus one. A page still
   advances at least one pixel or one terminal row. Plain PageUp/PageDown always scroll the chat
   transcript. Paging is blocked by modals;
   repeated terminal pages accumulate against the pending offset until herdr acknowledges it.
-- Explicit Find cancels unsent scrollbar offsets and waits for a native scroll already sent;
-  the scrollbar is disabled until that search ends, so an older drag cannot overwrite its result.
+- Explicit Find cancels unsent page offsets and waits for a native scroll already sent;
+  paging is disabled until that search ends, so an older page cannot overwrite its result.
 - xterm has `scrollback: 0`; wheel/touch gestures reach herdr's alternate-screen scrollback. The
-  mount clips its own gutter and hides the unused xterm scrollbar.
+  mount hides the unused xterm scrollbar.
 - Terminal banners stack top-right for ended, reconnecting, observe and held-draft review states.
   Under the chat lens, while the input card shows, the ones it shares with the composer (another
   app holds the pane, a failed output stream, the held draft, a copy note) stand over the card

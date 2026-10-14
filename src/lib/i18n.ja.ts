@@ -1017,7 +1017,6 @@ export const JA: Record<string, string> = {
   "Move tab left": "タブを左に移動",
   "Move tab right": "タブを右に移動",
   "Tab order did not refresh. Try again.": "タブの順序が更新されませんでした。もう一度お試しください。",
-  "Terminal scrollback": "ターミナル履歴",
   "Scroll failed: {reason}": "スクロールに失敗しました: {reason}",
   "Plan: {done} of {total} done": "計画: {total} 件中 {done} 件完了",
   "Plan": "計画",

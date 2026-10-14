@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createServer, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import * as herdr from "./herdr/client.ts";
+import { PtySession } from "./pty/session.ts";
 
 /**
  * Contract test for the composer's "submit" frame, against the real herdr server.
@@ -178,6 +179,53 @@ afterAll(async () => {
 });
 
 describe("WebSocket submit", () => {
+  it("rejects a held-copy resend combined with Send anyway before reserving or replaying its id", async () => {
+    const socket = await Socket.connect();
+    const from = chunks(shell).length;
+    const frame = { type: "submit", pane_id: shell.pane, text: "combined-copy-541", payload: "combined-copy-541", resend_id: "combined-contract-541" };
+    try {
+      socket.send({ ...frame, id: 550, send_anyway: true });
+      expect(await socket.result(550)).toMatchObject({ ok: false, code: "invalid_delivery" });
+      expect(typed(shell, from)).toBe("");
+      socket.send({ ...frame, id: 551 });
+      expect(await socket.result(551)).toMatchObject({ ok: true });
+      socket.send({ ...frame, id: 552, send_anyway: true });
+      expect(await socket.result(552)).toMatchObject({ ok: false, code: "invalid_delivery" });
+      const barrier = new Promise<void>((resolve, reject) => {
+        const watcher = watch(dirname(shell.log), () => {
+          if (typed(shell, from).includes("combination-barrier541")) { clearTimeout(timer); watcher.close(); resolve(); }
+        });
+        const timer = setTimeout(() => { watcher.close(); reject(new Error("combination recorder barrier timed out")); }, 5000);
+      });
+      socket.send({ type: "submit", id: 553, pane_id: shell.pane, text: "combination-barrier541", payload: "combination-barrier541" });
+      expect(await socket.result(553)).toMatchObject({ ok: true });
+      await barrier;
+      expect(typed(shell, from).split("combined-copy-541").length - 1).toBe(1);
+    } finally { socket.close(); }
+  }, 30_000);
+
+  it("regression: sends one held-copy resend across two connections", async () => {
+    const first = await Socket.connect(), second = await Socket.connect();
+    const from = chunks(shell).length;
+    try {
+      const frame = { type: "submit", pane_id: shell.pane, text: "held-copy-541", payload: "held-copy-541", resend_id: "held-copy-regression-541" };
+      first.send({ ...frame, id: 541 });
+      second.send({ ...frame, id: 542 });
+      expect(await first.result(541)).toMatchObject({ ok: true });
+      expect(await second.result(542)).toMatchObject({ ok: true });
+      // The recorder processing a later serialized message proves all preceding bytes arrived.
+      const barrier = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
+        const watcher = watch(dirname(shell.log), () => {
+          if (typed(shell, from).includes("barrier541")) { clearTimeout(timer); watcher.close(); resolve(); }
+        });
+      });
+      second.send({ type: "submit", id: 543, pane_id: shell.pane, text: "barrier541", payload: "barrier541" });
+      expect(await second.result(543)).toMatchObject({ ok: true });
+      await barrier;
+      expect(typed(shell, from).split("held-copy-541").length - 1).toBe(1);
+    } finally { first.close(); second.close(); }
+  }, 30_000);
   for (const failure of ["read", "menu", "clear", "keys", "send"] as const) {
     it(`reports a partial outcome for a ${failure} failure after clearing starts`, async () => {
       const socket = await Socket.connect();
@@ -1168,17 +1216,67 @@ describe("WebSocket submit", () => {
 
   it("sends a message typed right after a Stop only once the Stop reached the pane", async () => {
     const socket = await Socket.connect();
+    const originalWrite = PtySession.prototype.write;
+    const originalSendText = herdr.paneSendText;
+    let releaseStop: (() => void) | undefined;
+    // A busy sidecar can still hold a pty ESC when the later RPC paste reaches herdr.
+    // Force that interleaving without a clock: a pty ESC goes out only after the paste.
+    const write = spyOn(PtySession.prototype, "write").mockImplementation(function (this: PtySession, text) {
+      if (text === "\u001b") {
+        releaseStop = () => { originalWrite.call(this, text); };
+        return true;
+      }
+      return originalWrite.call(this, text);
+    });
+    const sendText = spyOn(herdr, "paneSendText").mockImplementation(async (...args) => {
+      const result = await originalSendText(...args);
+      if (args[0] === shell.pane && args[1] === "after") releaseStop?.();
+      return result;
+    });
     try {
-      socket.send({ type: "attach", pane_id: shell.pane, cols: 100, rows: 30 });
-      await socket.waitFor((message) => message.type === "pty-data" && message.pane_id === shell.pane);
-      await Bun.sleep(300);
+      await attached(socket, shell.pane);
       const from = chunks(shell).length;
-      socket.send({ type: "input", pane_id: shell.pane, text: "\u001b" });
+      socket.send({ type: "input", pane_id: shell.pane, text: "\u001b", stop: true });
       socket.send({ type: "submit", id: 8, pane_id: shell.pane, text: "after", payload: "after" });
-      await socket.result(8);
+      expect(await socket.result(8)).toMatchObject({ ok: true });
       await received(shell, from, 1);
       expect(typed(shell, from)).toBe("\u001bafter\r");
     } finally {
+      write.mockRestore();
+      sendText.mockRestore();
+      socket.close();
+    }
+  }, 30_000);
+
+  it("keeps a terminal ESC in order with the typing around it", async () => {
+    const socket = await Socket.connect();
+    await attached(socket, shell.pane);
+    const originalWrite = PtySession.prototype.write;
+    const originalSendText = herdr.paneSendText;
+    const held: Array<() => void> = [];
+    const flush = () => { for (const write of held.splice(0)) write(); };
+    // Hold the pty's writes as a busy sidecar would: they go out once all three frames were
+    // written, or once something sent through herdr meanwhile reached the pane ahead of them.
+    const write = spyOn(PtySession.prototype, "write").mockImplementation(function (this: PtySession, text) {
+      held.push(() => { originalWrite.call(this, text); });
+      if (held.length === 3) flush();
+      return true;
+    });
+    const sendText = spyOn(herdr, "paneSendText").mockImplementation(async (...args) => {
+      const result = await originalSendText(...args);
+      if (args[0] === shell.pane) flush();
+      return result;
+    });
+    try {
+      const from = chunks(shell).length;
+      socket.send({ type: "input", pane_id: shell.pane, text: "x" });
+      socket.send({ type: "input", pane_id: shell.pane, text: "\u001b" });
+      socket.send({ type: "input", pane_id: shell.pane, text: "y\r" });
+      await received(shell, from, 1);
+      expect(typed(shell, from)).toBe("x\u001by\r");
+    } finally {
+      write.mockRestore();
+      sendText.mockRestore();
       socket.close();
     }
   }, 30_000);

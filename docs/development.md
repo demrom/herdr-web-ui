@@ -586,7 +586,8 @@ administrators. Branch protection does not require branches to be up to date bef
 does not enforce resolved review threads; resolve every review thread before merging anyway, as a
 practice. Force pushes and branch deletion are disabled. Human approvals are optional for this maintainer-led
 project; external contributions still need maintainer review. CodeRabbit is advisory, not a required
-check.
+check. It reviews a pull request once when it opens and not on later pushes;
+comment `@coderabbitai review` on the final head before merging and wait for it.
 Release tags must not be moved or deleted. These GitHub settings are separate from files
 in the checkout.
 

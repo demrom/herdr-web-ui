@@ -201,7 +201,7 @@ A pane's plan is the task list a Claude Code agent keeps (`TaskCreate` / `TaskUp
 | **Find in chat** | In an agent's native chat, the **Find in messages** button, or Mod+F while that chat shows in the active pane, finds literal text in the loaded conversation, folded work and tool output included, with **Match case**, a match count and previous/next. Enter in the field steps forward, Shift+Enter back, Escape closes; **Search earlier messages** loads older pages until one matches (**Cancel search** stops it). |
 | **Follow the plan** | A supported todo-tool call folds into the turn's work block like any tool: it reads as the done count or the step it took, and opened, as the whole list by phase. |
 | **Drop into the real terminal** | xterm.js on the live pane: full-screen TUIs, raw keys and herdr's scrollback, shared with your own herdr TUI. Drag to select and it is copied on release; the wheel or the screen's edge scrolls further back while you drag. Ctrl+C copies a selection instead of interrupting. **Quote in message**, shown while text is selected, adds the selection to that pane's chat draft in a code block headed by the pane name, and its line numbers when herdr reports them; nothing is sent. |
-| **Find in terminal** | **More → Find in terminal** or Mod+Shift+F searches literal text in herdr's history, with a match count, previous/next navigation and visible match highlights. Drag the terminal scrollbar or focus it and use arrows, Page Up/Down, Home or End. Search jumps and scrolling move the same viewport in every attached client, including the TUI. Older bridges retain search navigation without automatic highlights; read-only views cannot move the scrollbar. |
+| **Find in terminal** | **More → Find in terminal** or Mod+Shift+F searches literal text in herdr's history, with a match count, previous/next navigation and visible match highlights. Search jumps and scrolling move the same viewport in every attached client, including the TUI. Older bridges retain search navigation without automatic highlights. |
 | **Jump across PCs** | The command palette (Mod+Shift+K) searches all connected PCs at once by PC, workspace, branch, tab, pane title or agent kind. PC names distinguish results, and Recent remembers each pane's PC. Picking a result opens that PC and pane directly. Disconnected PCs are omitted; app and plugin actions remain on the currently selected PC. It also finds Settings pages and actions by related words (try `theme` or `font`), and browses folders: type a path such as `~/`, or pick **Browse folders**, and the folder you reach opens in Files. |
 | **Answer prompts** | Approval, question and plan menus become cards. Tap an option, or type its number in the composer. The server checks that the menu is still current before answering. |
 | **Compose** | `/` commands and `@` file mentions, any file or image up to 32 MB attached by path, and a draft per pane. Send during work schedules a next-turn message; use its ↑ Send now action to send it now. A strip under the input card names the pane's working folder (the whole path on hover) and, for a workspace of a repository with a worktree open, its branch at the other end. |
@@ -524,8 +524,7 @@ behavior; from an empty one, such as the chat's empty message box, they switch p
 List and tab controls also have focus-local keys; those do not become global terminal shortcuts.
 On a focused tab, Alt+Shift+Left/Right reorders it and Shift+F10 opens its menu. For the pane menu
 on desktop, tab to the pane header's **⋯** (it appears on keyboard focus) and press Enter.
-Shift+F10 inside the terminal stays with the terminal program. On the terminal
-scrollbar, arrows move a line, Page Up/Down a viewport minus one line, and Home/End the start/end of history.
+Shift+F10 inside the terminal stays with the terminal program.
 
 On a phone, use the header, the tab's ⋯ and the More menu for app actions. The command palette
 and its plugin actions are not available in the phone touch UI. Use a wider screen or an external
@@ -547,7 +546,6 @@ Unavailable or invalid history data never causes application input, and no key i
 while disconnected.
 One line stays visible between pages. Chat uses the displayed text's line height, and Terminal
 uses native rows. A page still advances by at least one pixel in chat or one terminal row.
-Focused scrollbar PageUp/PageDown pages the same way.
 For an iPad with an external keyboard that lacks PageUp/PageDown, assign letters such as
 U and D to **Scroll pane up** and **Scroll pane down** in Settings → Shortcuts. Mod+Shift
 stays fixed. This lets you read history without leaving the message box or reaching for

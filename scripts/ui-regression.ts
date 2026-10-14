@@ -146,7 +146,7 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   const painted = new Set<string>();
   const sockets: import("playwright-core").WebSocket[] = [];
-  const inputs: Array<{ type: "input" | "submit"; pane_id: string; text: string; delivery?: "immediate" | "queue" }> = [];
+  const inputs: Array<{ type: "input" | "submit"; pane_id: string; text: string; delivery?: "immediate" | "queue"; stop?: true }> = [];
   const pendingActions: Array<{ pane_id: string; pending_id: string; action: string }> = [];
   // keyed by pane, with the connection that said so: an earlier connection's input-ready says nothing about the current one
   const inputStates = new Map<string, { ready: boolean; at: number; socket: import("playwright-core").WebSocket }>();
@@ -940,6 +940,7 @@ try {
   assert.equal(await page.getByRole("button", { name: "Stop agent", exact: true }).count(), 0);
   await composer.press("Escape");
   await until(() => pendingBytes() === `\u001b[200~${queuedTexts[0]}\u001b[201~\r\u001b`, "Escape with a draft stops the working agent");
+  assert.deepEqual(inputs.at(-1), { type: "input", pane_id: pendingPane, text: "\u001b", stop: true }, "the composer's Stop goes out as a Stop");
   assert.equal(await composer.inputValue(), "a draft while the agent works", "Escape leaves the draft in the box");
   await composer.fill("");
   // a follow-up sent between a reconnect and its snapshot is the new connection's own row, not an unconfirmed copy

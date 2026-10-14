@@ -147,7 +147,7 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
   };
   const removed = (id: string, outcome = "sent", reader = socket) => reader.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane && frame.removed?.some((entry: any) => entry.id === id && entry.outcome === outcome));
   const another = async (attach = true) => { const reader = new Socket(server.port); entry.sockets.push(reader); if (attach) await reader.attach(pane); else await reader.wait((frame) => frame.type === "snapshot"); return reader; };
-  return { pane, port: server.port, socket, bytes, waitBytes, state, showScreen, queue, removed, another, replacementLog };
+  return { screenFile, pane, port: server.port, socket, bytes, waitBytes, state, showScreen, queue, removed, another, replacementLog };
 }
 
 describe("connection-owned pending input", () => {
@@ -270,6 +270,74 @@ describe("connection-owned pending input", () => {
     } finally { session.mockRestore(); }
   }, 30_000);
 
+  for (const originalFirst of [false, true]) it(`regression: two connections share refusal then retry a new attempt once (original first=${originalFirst})`, async () => {
+    const rule = "\u2500".repeat(60), footer = "[Haiku 4.5] \u2502 project";
+    const f = await setup("copy-retry", "claude", `  \u273b Cooked for 1s\n${rule}\n\u276f occupied draft\n${rule}\n  ${footer}\n`);
+    let resendId = "retry-copy-id";
+    if (originalFirst) {
+      f.socket.send({ type: "submit", id: 0, pane_id: f.pane, text: "retry copy", payload: "unused", delivery: "hold" });
+      const held = await f.socket.result(0);
+      expect(held.pending?.state).toBe("held");
+      resendId = held.pending.id;
+    }
+    await f.state("idle");
+    const other = await f.another();
+    const send = (socket: Socket, id: number, generation: number) => socket.send(originalFirst && socket === f.socket
+      ? { type: "pending-action", id, pane_id: f.pane, pending_id: resendId, action: "steer", resend_generation: generation }
+      : { type: "submit", id, pane_id: f.pane, text: "retry copy", payload: paste("retry copy"), resend_id: resendId, resend_generation: generation });
+    const originalResult = (id: number) => originalFirst ? f.socket.action(id) : f.socket.result(id);
+    send(f.socket, 1, 0); send(other, 2, 0);
+    expect(await originalResult(1)).toMatchObject({ ok: false, code: "input_draft" });
+    expect(await other.result(2)).toMatchObject({ ok: false, code: "input_draft" });
+    let output = "";
+    const processed = new Set<object>();
+    const drawn = f.socket.wait((frame) => {
+      if (frame.type !== "pty-data" || processed.has(frame)) return false;
+      processed.add(frame); output += frame.data;
+      return output.includes("run the tests");
+    }, f.socket.seen.length);
+    writeFileSync(f.screenFile, `  \u273b Cooked for 1s\n${rule}\n\u276f \u001b[2mrun the tests\u001b[0m\n${rule}\n  ${footer} \n`);
+    await drawn;
+    send(other, 3, 0);
+    expect(await other.result(3)).toMatchObject({ ok: false, code: "input_draft" });
+    send(f.socket, 4, 1); send(other, 5, 1);
+    expect(await originalResult(4)).toMatchObject({ ok: true });
+    expect(await other.result(5)).toMatchObject({ ok: true });
+    const barrier = new Promise<void>((resolve, reject) => {
+      const watcher = watch(root, () => {
+        if (f.bytes().includes("retry-barrier\r")) { clearTimeout(timer); watcher.close(); resolve(); }
+      });
+      const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
+    });
+    other.send({ type: "submit", id: 6, pane_id: f.pane, text: "retry-barrier", payload: "retry-barrier", typed: true });
+    expect(await other.result(6)).toMatchObject({ ok: true });
+    await barrier;
+    expect(f.bytes().split("retry copy").length - 1).toBe(1);
+  }, 30_000);
+  for (const copyFirst of [false, true]) it(`regression: shares a held row's send with its saved copy (copy first=${copyFirst})`, async () => {
+    const f = await setup("cross-tab-held");
+    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "held cross tab", payload: "unused", delivery: "hold" });
+    const answer = await f.socket.result(1);
+    expect(answer.pending?.state).toBe("held");
+    await f.state("idle");
+    const other = await f.another();
+    const copy = () => other.send({ type: "submit", id: 2, pane_id: f.pane, text: "held cross tab", payload: paste("held cross tab"), resend_id: answer.pending.id });
+    const original = () => f.socket.send({ type: "pending-action", id: 3, pane_id: f.pane, pending_id: answer.pending.id, action: "steer" });
+    if (copyFirst) { copy(); expect(await other.result(2)).toMatchObject({ ok: true }); original(); }
+    else { original(); expect(await f.socket.action(3)).toMatchObject({ ok: true }); copy(); }
+    expect(await other.result(2)).toMatchObject({ ok: true });
+    expect(await f.socket.action(3)).toMatchObject({ ok: true });
+    const barrier = new Promise<void>((resolve, reject) => {
+      const watcher = watch(root, () => {
+        if (f.bytes().includes("barrier\r")) { clearTimeout(timer); watcher.close(); resolve(); }
+      });
+      const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
+    });
+    other.send({ type: "submit", id: 4, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
+    expect(await other.result(4)).toMatchObject({ ok: true });
+    await barrier;
+    expect(f.bytes().split("held cross tab").length - 1).toBe(1);
+  }, 30_000);
   it("interrupts an explicit Codex Send now only after its native steering panel appears", async () => {
     const f = await setup("codex-send-now", "codex"); const message = await f.queue(1, "send this now");
     f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
@@ -700,9 +768,9 @@ describe("connection-owned pending input", () => {
     expect(f.bytes()).toBe(""); expect(f.socket.seen.some((frame) => frame.type === "pending-messages")).toBe(false);
   }, 30_000);
 
-  it("checks a new blocked state after the Stop key's settling gap, before pasting", async () => {
-    const f = await setup("stop-gap"); const message = await f.queue(1, "must not paste");
-    f.socket.send({ type: "input", pane_id: f.pane, text: "\u001b" });
+  for (const stop of [false, true]) it(`checks a new blocked state after the ${stop ? "composer's Stop" : "typed ESC"}'s settling gap, before pasting`, async () => {
+    const f = await setup(stop ? "stop-gap-intent" : "stop-gap"); const message = await f.queue(1, "must not paste");
+    f.socket.send(stop ? { type: "input", pane_id: f.pane, text: "\u001b", stop: true } : { type: "input", pane_id: f.pane, text: "\u001b" });
     f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: PendingMessage) => item.id === message.id && item.state === "sending"));
     await f.state("blocked");

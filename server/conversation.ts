@@ -48,12 +48,13 @@ import { processStartedAt } from "./process-start.ts";
 import { ompHeldTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
 import { piTranscriptInStore, piTranscriptPath, unwrittenSession } from "./pi.ts";
-import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchSegments } from "./pi-tree.ts";
 import { defaultDevinDbPath, DevinHistoryUnavailable, devinConversation, forgetDevinState } from "./devin.ts";
 import { forgetGrokState, grokProjection, grokToolOutput, parseGrokTranscript, GrokUnavailable } from "./grok.ts";
 import { resolveGrokStore } from "./grok-store.ts";
 import { AgyUnavailable, agyCatalog, agyToolOutput, forgetAgyState, parseAgyTranscript, withAgyHistory, type AgyProjection } from "./agy.ts";
 import { resolveAgyStore, sameAgyStore, type AgyStore } from "./agy-store.ts";
+import { withinRetentionBudget } from "./retention-budget.ts";
+import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchRecords, piBranchSegments } from "./pi-tree.ts";
 import { trimOutput } from "./tool-output.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
@@ -73,6 +74,7 @@ export { isOmoProcess } from "./omo.ts";
  * tool-heavy session; the chat asks for the pages before it as the reader scrolls up.
  */
 export const TRANSCRIPT_WINDOW_BYTES = 16 * 1024 * 1024;
+const PI_PAGE_CACHE_BYTES = 4 * 1024 * 1024;
 
 /** A page never holds more prompts than this (each opens a user + assistant pair). */
 const MAX_PAGE_PROMPTS = MAX_TURNS / 2;
@@ -255,6 +257,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
   /** the agent's last entry called a tool: its turn is not over, whatever is written meanwhile */
   let atWork = false;
+  /** injected feedback can resume the model without a human prompt after a completed reply */
+  let completed = false;
   /** where a notice goes: before the turn at work it was written in, else at the end */
   const noticeAt = (): number => atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
   /** the notifications already drawn: a completion is recorded in up to three places */
@@ -273,7 +277,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
-    if (last !== undefined && last.role === "assistant") return last;
+    if (last !== undefined && last.role === "assistant" && !completed) return last;
     const turn: ConversationTurn = { role: "assistant", ts: ts ?? null, parts: [] };
     turns.push(turn);
     return turn;
@@ -409,6 +413,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
       const turn = assistantTurn(entry.timestamp);
       // an entry that names no stop reason is still at work when it calls a tool
       const stop = entry.message?.stop_reason;
+      completed = stop === "end_turn";
       atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "tool_use"));
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
@@ -448,7 +453,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 const writtenSessions = new Set<string>();
 
 /** Re-parse on file changes, including replacement and same-size rewrites. */
-const cache = new Map<string, { signature: string; turns: ConversationTurn[]; metadata: ConversationMetadata; cursor: string | null; abandoned?: { count: number; branches: number; summary: string | null } }>();
+const cache = new Map<string, { source: RecognizedConversation["source"]; signature: string; turns: ConversationTurn[]; metadata: ConversationMetadata; cursor: string | null; abandoned?: { count: number; branches: number; summary: string | null } }>();
 
 export class ConversationUnavailable extends Error {
   constructor(reason: string) {
@@ -785,6 +790,7 @@ interface LiveScan {
 const liveScans = new Map<string, LiveScan>();
 
 interface SettledTurns {
+  source: RecognizedConversation["source"];
   id: string;
   /** the page start these turns begin at, and the turn start they end at */
   start: number;
@@ -847,6 +853,15 @@ function rememberPaneDevin(paneId: string, sessionId: string, cwd: string, dbPat
   const key = JSON.stringify([dbPath ?? defaultDevinDbPath(), sessionId, cwd]);
   reads.devin.set(key, { sessionId, cwd, dbPath });
   remember(paneReads, paneId, reads, PANE_READS_MAX);
+}
+
+/** Pi retains at most four small parsed pages per cache; oversized pages remain readable uncached. */
+function rememberPage<T extends { source: RecognizedConversation["source"] }>(map: Map<string, T>, key: string, value: T, limit: number): void {
+  map.delete(key);
+  if (value.source === "pi-transcript" && !withinRetentionBudget(value, PI_PAGE_CACHE_BYTES)) return;
+  remember(map, key, value, limit);
+  const piKeys = [...map].filter(([, item]) => item.source === "pi-transcript").map(([key]) => key);
+  while (piKeys.length > 4) map.delete(piKeys.shift()!);
 }
 
 /** The newest page's start and every turn start in it (pageBefore without widening), or null when it starts mid-turn. */
@@ -984,14 +999,15 @@ function liveTurns(path: string, stream: TranscriptStream, source: RecognizedCon
       const to = Math.min(start, kept.observedEnd);
       if (to > from) parseTurns(source, path, readStream(stream, from, to).toString("utf8"), inherited);
     }
-    settled = { id: stream.id, start, end: start, turns: [], metadata: parseConversationMetadata(`${head}\n`, source), tail: bytesBefore(stream, start), taskTitles: new Map(inherited), noticed: new Set(), inherited, observedEnd: stream.length };
+    settled = { source, id: stream.id, start, end: start, turns: [], metadata: parseConversationMetadata(`${head}
+`, source), tail: bytesBefore(stream, start), taskTitles: new Map(inherited), noticed: new Set(), inherited, observedEnd: stream.length };
   }
   if (settled.end < last) {
     const text = readStream(stream, settled.end, last).toString("utf8");
     settled = { ...settled, end: last, turns: [...settled.turns, ...parseTurns(source, path, text, settled.taskTitles, settled.noticed)], metadata: parseConversationMetadata(text, source, settled.metadata), tail: bytesBefore(stream, last) };
   }
   settled.observedEnd = stream.length;
-  remember(settledTurns, key, settled, 8);
+  rememberPage(settledTurns, key, settled, 8);
   if (source === "codex-transcript") {
     const live = codexLiveTurn(path, stream, last, settled.metadata);
     return { turns: [...settled.turns, ...live.turns], metadata: live.metadata };
@@ -1000,6 +1016,13 @@ function liveTurns(path: string, stream: TranscriptStream, source: RecognizedCon
   // the live turn is parsed again on every poll: its titles and completions are kept only
   // once it settles, so a read titles a task exactly as a cold read of the same bytes does
   return { turns: [...settled.turns, ...parseTurns(source, path, text, new Map(settled.taskTitles), new Set(settled.noticed))], metadata: parseConversationMetadata(text, source, settled.metadata) };
+}
+
+/** Retention diagnostics only: counts/budget adherence, never transcript contents. */
+export function piPageCacheUsage(): { pages: number; settled: number; withinBudget: boolean } {
+  const pages = [...cache.values()].filter(item => item.source === "pi-transcript");
+  const settled = [...settledTurns.values()].filter(item => item.source === "pi-transcript");
+  return { pages: pages.length, settled: settled.length, withinBudget: [...pages, ...settled].every(item => withinRetentionBudget(item, PI_PAGE_CACHE_BYTES)) };
 }
 
 /** Forget every scan and parse kept between polls (tests compare against a cold read). */
@@ -1582,8 +1605,7 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
   // the abandoned turns live outside the branch's byte ranges, so the page cannot see them: a
   // straight line answers { count: 0 }, which is most sessions and costs the client nothing
   const abandoned = source === "pi-transcript" ? piAbandonedTurns(path, stat.size) ?? undefined : undefined;
-  cache.set(key, { signature, turns, metadata, cursor, abandoned });
-  if (cache.size > 32) cache.delete(cache.keys().next().value!);
+  rememberPage(cache, key, { source, signature, turns, metadata, cursor, abandoned }, 32);
   return { source, turns, metadata, cursor, abandoned, history_id: stream.id, version };
 }
 
@@ -1691,16 +1713,19 @@ function piToolOutput(path: string, ref: string): string | null {
   let branch: ReturnType<typeof piBranchSegments>;
   try { size = statSync(path).size; branch = piBranchSegments(path, size); } catch { return null; }
   if (branch === null) return null;
-  const fd = openSync(path, "r");
-  try {
-    for (const segment of branch) {
-      const buffer = Buffer.alloc(segment.end - segment.start);
-      if (readSync(fd, buffer, 0, buffer.length, segment.start) !== buffer.length) continue;
-      const output = outputInText("pi-transcript", buffer.toString("utf8"), ref);
-      if (output !== null) return output;
+  // only a record that can be a clear or can hold the ref is parsed: an unrelated record (a picture
+  // the agent read, a long tool result) is skipped on a substring check, as the segment reader did
+  const needle = JSON.stringify(ref);
+  let output: string | null = null;
+  for (const line of piBranchRecords(path, size)) {
+    if (line.includes("context_clear")) {
+      let entry: unknown;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (isContextClear(entry, "pi-transcript")) { output = null; continue; }
     }
-  } finally { closeSync(fd); }
-  return null;
+    if (output === null && line.includes(needle)) output = outputInText("pi-transcript", line, ref);
+  }
+  return output;
 }
 
 /**
@@ -1716,22 +1741,15 @@ export function piTranscriptImage(path: string, ref: string): { mediaType: strin
   let branch: ReturnType<typeof piBranchSegments>;
   try { size = statSync(path).size; branch = piBranchSegments(path, size); } catch { return null; }
   if (branch === null) return null;
-  const fd = openSync(path, "r");
-  try {
-    for (const segment of branch) {
-      const buffer = Buffer.alloc(segment.end - segment.start);
-      if (readSync(fd, buffer, 0, buffer.length, segment.start) !== buffer.length) continue;
-      for (const line of buffer.toString("utf8").split("\n")) {
-        if (!line.includes(callId)) continue;
-        let entry: unknown;
-        try { entry = JSON.parse(line); } catch { continue; }
-        const message = piMessage(entry);
-        if (message === null) continue;
-        const image = piImageBlock(message, callId, Number(nth));
-        if (image !== null) return { mediaType: image.media_type, bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
-      }
-    }
-  } finally { closeSync(fd); }
+  for (const line of piBranchRecords(path, size)) {
+    if (!line.includes(callId)) continue;
+    let entry: unknown;
+    try { entry = JSON.parse(line); } catch { continue; }
+    const message = piMessage(entry);
+    if (message === null) continue;
+    const image = piImageBlock(message, callId, Number(nth));
+    if (image !== null) return { mediaType: image.media_type, bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
+  }
   return null;
 }
 

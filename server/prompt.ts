@@ -1875,6 +1875,28 @@ function withoutClaudeTasks(shown: string[], hintEnds: (lines: string[], end: nu
   return end < shown.length && hintEnds(shown, end) ? shown.slice(0, end) : shown;
 }
 
+/** The rule below an OmO form or composer, then extension task status and the native footer. */
+function omoFooterIsActive(lines: string[]): boolean {
+  let rules = 0;
+  let footer = 0;
+  let widget = false;
+  for (const line of lines) {
+    if (!line) continue;
+    if (SOLID_RULE_RE.test(line)) {
+      if (rules > 0 || footer > 0) return false;
+      rules = 1;
+    } else if (rules > 0 && footer === 0 && (
+      /^(?:[▶◌✗✓] .*\bcategory:|▶ .* \bwave \d+\/\d+\b)/.test(line)
+      || (widget && /^(?:\d+[hms]\s*)+$/.test(line))
+    )) {
+      // A duration may wrap off the task row. Only these status rows precede the native footer;
+      // arbitrary output, a second rule, or another program's input still invalidates the form.
+      widget = true;
+    } else if (rules === 0 || ++footer > OMO_FOOTER_LINES || OMO_NOT_FOOTER_RE.test(line)) return false;
+  }
+  return rules === 1;
+}
+
 function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   const cleanLines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine);
   const visible = cleanLines.filter((line) => line && !isDivider(line));
@@ -1907,8 +1929,8 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   if (prompt.responder === "claude-effort") return ends(CLAUDE_EFFORT_HINT_RE);
   if (prompt.responder === "codex-model") return ends(/(?:^|\s)enter select\s*·\s*esc back$|(?:^|\s)enter (?:default|apply)\s*·\s*s session\s*·\s*esc back$/i);
   if (prompt.responder === "omo-question" || prompt.responder === "omo-review" || prompt.responder === "omo-typing") {
-    // The form is live only with nothing but OmO's own footer under its hint: blank lines, one
-    // rule, then the footer's few lines (cwd, context, model). Anything else is the form's text
+    // The form is live only with OmO's footer and extension status under its hint: blank lines, one
+    // rule, status widgets, then the footer's few lines (cwd, context, model). Anything else is the form's text
     // in another program (printed in a shell, quoted in a transcript over an input box), where
     // an answer's keys would be typed into that program.
     const hint = { "omo-question": OMO_OPTIONS_HINT_RE, "omo-review": OMO_REVIEW_HINT_RE, "omo-typing": OMO_TYPING_HINT_RE }[prompt.responder];
@@ -1917,33 +1939,15 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
     let end = at;
     while (end < at + OMO_HINT_LINES && !OMO_HINT_END_RE.test(cleanLines.slice(at, end + 1).join(" ").trim())) end += 1;
     if (end >= at + OMO_HINT_LINES) return false;
-    let rules = 0;
-    let footer = 0;
-    for (const line of cleanLines.slice(end + 1)) {
-      if (!line) continue;
-      if (SOLID_RULE_RE.test(line)) {
-        if (rules > 0 || footer > 0) return false;
-        rules = 1;
-      } else if (rules === 0 || ++footer > OMO_FOOTER_LINES || OMO_NOT_FOOTER_RE.test(line)) return false;
-    }
-    return rules === 1;
+    return omoFooterIsActive(cleanLines.slice(end + 1));
   }
   if (prompt.responder === "omo-pending") {
     // The widget is live over OmO's input box, other widgets maybe between them: the box (a rule,
-    // the box's line, empty, a rule) and then nothing but OmO's footer.
+    // the box's line, empty, a rule) and then OmO's extension status and native footer.
     const at = findLastIndex(cleanLines, (line, index) => line !== "" && OMO_PENDING_HINT_RE.test(wrapped(cleanLines, index)));
     const box = cleanLines.findIndex((line, index) => index > at && OMO_EMPTY_BOX_RE.test(line));
     if (at < 0 || box < 0 || box - at > 60 || !cleanLines[box - 1]!.startsWith("─")) return false;
-    let rules = 0;
-    let footer = 0;
-    for (const line of cleanLines.slice(box + 1)) {
-      if (!line) continue;
-      if (SOLID_RULE_RE.test(line)) {
-        if (rules > 0 || footer > 0) return false;
-        rules = 1;
-      } else if (rules === 0 || ++footer > OMO_FOOTER_LINES || OMO_NOT_FOOTER_RE.test(line)) return false;
-    }
-    return rules === 1;
+    return omoFooterIsActive(cleanLines.slice(box + 1));
   }
   // pi keeps its footer under every dialog — the pane's folder, then its context meter — so the
   // hint sits near the end without being it. A dialog already answered leaves its hint far
@@ -3154,8 +3158,8 @@ async function liveScreen(paneId: string): Promise<string> {
   return (await paneRead({ paneId, source: "detection", format: "text" })).text;
 }
 
-/** omo's form or its widget on a screen, by a line of its key hint: worth a look in the pane's session. */
-const OMO_FORM_RE = /\b1-9 select\b|enter save and next|\btab next question\b|\bor just type your reply\b/;
+/** omo's form or widget hint: a narrow pane wraps it, including between "just" and "type". */
+const OMO_FORM_RE = /\b1-9\s+select\b|enter\s+save\s+and\s+next|\btab\s+next\s+question\b|\bor\s+just\s+type\s+your\s+reply\b/;
 const omoAskReader = new OmoAskReader();
 
 /** Resolve the live process tree every time: a cached session can outlive its agent. */

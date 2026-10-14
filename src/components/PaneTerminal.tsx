@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -199,7 +199,6 @@ export function PaneTerminal({
   const [findOpen, setFindOpen] = useState(false);
   const [terminal, setTerminal] = useState<Terminal | null>(null);
   const [searchState, setSearchState] = useState<TerminalSearchState | null>(null);
-  const viewportId = useId();
   const viewportIntent = useMemo(() => new ViewportIntentGate(), [machineId, paneId]);
   const viewportSearching = useSyncExternalStore(viewportIntent.subscribe, viewportIntent.isSearching, viewportIntent.isSearching);
   const findOpenRef = useRef(findOpen);
@@ -266,6 +265,8 @@ export function PaneTerminal({
   const setLineComposing = useCallback((active: boolean) => { lineComposingRef.current = active; setLineComposingState(active); }, []);
   const compositionCommitPendingRef = useRef(false);
   const barKeyRef = useRef<{ key: string; chord: string | null } | null>(null);
+  /** set while the composer's Stop types its ESC, so it goes out as a Stop (ClientMessage `input.stop`) */
+  const stopKeyRef = useRef(false);
   const modifiersRef = useRef<StickyModifiers>(NO_STICKY_MODIFIERS);
   const [modifiers, setModifiers] = useState<StickyModifiers>(NO_STICKY_MODIFIERS);
   const clearModifiers = useCallback(() => {
@@ -1321,6 +1322,8 @@ export function PaneTerminal({
     const onData = term.onData((data) => {
       const barKey = barKeyRef.current;
       barKeyRef.current = null;
+      const stopKey = stopKeyRef.current;
+      stopKeyRef.current = false;
       const physicalChord = typedChord;
       typedChord = null;
       // a modified Enter (Shift+Enter's newline, Ctrl+Enter's "send now") is decided on before its
@@ -1387,7 +1390,7 @@ export function PaneTerminal({
         }
         return;
       }
-      if (socket.sendInput(current, input)) return;
+      if (socket.sendInput(current, input, stopKey && input === "\u001b")) return;
       if (secret) {
         const t = tRef.current;
         setInputError(t("Not sent: the terminal is not ready, and a password is never held for later."));
@@ -1796,7 +1799,9 @@ export function PaneTerminal({
     const leave = (): void => {
       if (cachedRef.current) { release(); return; }
       const current = paneRef.current;
-      if (current && !observeRef.current && !fixedGridRef.current) socket.keepSize(current);
+      // A visible but unfocused window still shows the terminal and can receive its grid back.
+      // Blur changes only reconnect policy; hiding the document also releases its server grid.
+      if (current && !observeRef.current && !fixedGridRef.current) socket.keepSize(current, document.visibilityState === "hidden");
       if (releaseAwayRef.current && releaseTimer === null && !releasedRef.current) releaseTimer = window.setTimeout(() => {
         if (paneRef.current === current) release();
       }, RELEASE_AFTER_MS);
@@ -1847,8 +1852,8 @@ export function PaneTerminal({
     // Another device can size the pty while this window keeps its focus (a phone used beside a
     // PC left in front): no focus event comes back here, so a click or key in this terminal
     // takes the pane back to this window's grid.
-    // Only input meant for the terminal itself: a press or key in the find bar, on the scrollbar
-    // or the key bar, a right-click for the pane menu, a held key's repeats or an IME composition
+    // Only input meant for the terminal itself: a press or key in the find bar or the key bar,
+    // a right-click for the pane menu, a held key's repeats or an IME composition
     // must not resize the pty under the other device.
     // A phone's own input paths sit outside the grid (the input line, its Send and Enter, a key the
     // key bar sends, not a press on it), so they call this before they send: the reply is then
@@ -2205,7 +2210,7 @@ export function PaneTerminal({
   // must not turn a one-letter message into a control key. Offline it sends nothing and
   // keeps its text (never-queue); a message the server could not deliver keeps it too,
   // with the reason. Bracketed-paste wrapping follows the pane program's mode.
-  const submitComposerMessage = useCallback((text: string, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false): Promise<SubmitResult> | null => {
+  const submitComposerMessage = useCallback((text: string, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number): Promise<SubmitResult> | null => {
     const term = termRef.current;
     const socket = socketRef.current;
     const session = sessionRef.current;
@@ -2215,7 +2220,7 @@ export function PaneTerminal({
     if (draftHeldForRef.current === pane) return Promise.resolve({ ok: false, code: "held_input", message: "send or discard the held input first" });
     // not the scope itself: a message sent right after a reconnect leaves before the snapshot that names it
     const epoch = session.epoch;
-    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), false, delivery, clearDraft, sendAnyway);
+    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), false, delivery, clearDraft, sendAnyway, resendId, generation);
     if (sent === null) return null;
     const releaseSubmit = submitRetention?.retain(pane);
     const submission = delivery !== "immediate" ? { pane, socket, epoch } : null;
@@ -2329,7 +2334,8 @@ export function PaneTerminal({
     const term = termRef.current;
     const socket = socketRef.current;
     if (!term || !socket || !socket.connected) return;
-    term.input("\u001b");
+    stopKeyRef.current = true;
+    try { term.input("\u001b"); } finally { stopKeyRef.current = false; }
   }, []);
 
   // While the agent runs, append to its held messages. Each requires an explicit send.
@@ -2494,54 +2500,60 @@ export function PaneTerminal({
   );
 
   const actOnPending = useCallback(async (id: string, action: "steer" | "discard"): Promise<void> => {
-    const owner = queueOwner, pane = paneId;
-    const socket = socketRef.current, scope = pendingScopeRef.current;
-    if (owner === null || pane === null || paneRef.current !== pane) return;
-    // what another tab saved since: a copy it is sending again is not confirmed here either
-    pendingMessages.refresh(owner);
-    const message = pendingMessages.read(owner).find((item) => item.id === id);
-    if (!message || message.state === "sending") return;
-    if (action === "steer" && (message.state === "uncertain" || !socket?.connected || heldRef.current || secretRef.current !== null || observeRef.current || ended || heldByOpenQueue || answering !== null)) return;
-    if (message.serverOwned && !pendingMessages.isOwned(owner, id, scope)) return;
-    // keys held back in the terminal draft would run in front of the message: the server pastes a
-    // server-owned row's text and sends Enter without looking for a partial line (only Claude's box
-    // is checked there). The row stays as it is, so Send now after the draft is settled, or Discard, still works.
-    if (action === "steer" && draftHeldForRef.current === pane) {
-      pendingMessages.fail(owner, id, { code: "held_input", message: "send or discard the held input first" }, false);
-      return;
-    }
-    if (!pendingMessages.begin(owner, id)) return;
-    try {
-      if (message.serverOwned) {
-        const result = socket?.pendingAction(pane, id, action);
-        if (!result) {
-          pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not confirmed. Check the terminal before sending again.") }, true);
-          return;
-        }
-        // as a composer send: the pane keeps its connection and lease until the receipt settles
-        const releaseSubmit = submitRetention?.retain(pane);
-        const answer = await result.finally(() => releaseSubmit?.());
-        if (!answer.ok) pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, answer.code === "pending_not_found" || !submitNotTyped(answer.code));
-        // Only the matching server removal receipt removes an authoritative item.
-      } else if (action === "discard") {
-        pendingMessages.removeCopy(owner, id);
-      } else if (message.state === "held") {
-        if (!pendingMessages.unconfirm(owner, id)) {
-          pendingMessages.fail(owner, id, { code: "unsaved", message: t("Queue could not be saved. Keep this tab open or copy the messages before reloading.") }, false);
-          return;
-        }
-        const result = submitComposerMessage(message.text, "immediate");
-        if (!result) {
-          pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not sent. Reconnect and try again.") }, false);
-          return;
-        }
-        const answer = await result;
-        if (answer.ok) pendingMessages.removeCopy(owner, id);
-        else pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, !submitNotTyped(answer.code));
+    const perform = async (): Promise<void> => {
+      const owner = queueOwner, pane = paneId;
+      const socket = socketRef.current, scope = pendingScopeRef.current;
+      if (owner === null || pane === null || paneRef.current !== pane) return;
+      // what another tab saved since: a copy it is sending again is not confirmed here either
+      pendingMessages.refresh(owner);
+      const message = pendingMessages.read(owner).find((item) => item.id === id);
+      if (!message || message.state === "sending") return;
+      if (action === "steer" && (message.state === "uncertain" || !socket?.connected || heldRef.current || secretRef.current !== null || observeRef.current || ended || heldByOpenQueue || answering !== null)) return;
+      if (message.serverOwned && !pendingMessages.isOwned(owner, id, scope)) return;
+      // keys held back in the terminal draft would run in front of the message: the server pastes a
+      // server-owned row's text and sends Enter without looking for a partial line (only Claude's box
+      // is checked there). The row stays as it is, so Send now after the draft is settled, or Discard, still works.
+      if (action === "steer" && draftHeldForRef.current === pane) {
+        pendingMessages.fail(owner, id, { code: "held_input", message: "send or discard the held input first" }, false);
+        return;
       }
-    } catch {
-      pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not confirmed. Check the terminal before sending again.") }, true);
-    } finally { pendingMessages.end(owner, id); }
+      if (!pendingMessages.begin(owner, id)) return;
+      try {
+        if (message.serverOwned) {
+          const result = socket?.pendingAction(pane, id, action, message.resendGeneration ?? 0);
+          if (!result) {
+            pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not confirmed. Check the terminal before sending again.") }, true);
+            return;
+          }
+          // as a composer send: the pane keeps its connection and lease until the receipt settles
+          const releaseSubmit = submitRetention?.retain(pane);
+          const answer = await result.finally(() => releaseSubmit?.());
+          if (!answer.ok) pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, answer.code === "pending_not_found" || !submitNotTyped(answer.code),
+            action === "steer" ? message.resendGeneration ?? 0 : undefined);
+          // Only the matching server removal receipt removes an authoritative item.
+        } else if (action === "discard") {
+          pendingMessages.removeCopy(owner, id);
+        } else if (message.state === "held") {
+          if (!pendingMessages.unconfirm(owner, id)) {
+            return;
+          }
+          const result = submitComposerMessage(message.text, "immediate", undefined, false, id, message.resendGeneration ?? 0);
+          if (!result) {
+            pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not sent. Reconnect and try again.") }, false);
+            return;
+          }
+          const answer = await result;
+          if (answer.ok) pendingMessages.removeCopy(owner, id);
+          else pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, !submitNotTyped(answer.code), message.resendGeneration ?? 0);
+        }
+      } catch {
+        pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not confirmed. Check the terminal before sending again.") }, true);
+      } finally { pendingMessages.end(owner, id); }
+    };
+    // Web Locks reduce contention where supported; the bridge's stable resend ID is the
+    // authority on LAN HTTP and when two tabs have already read the same held copy.
+    if (navigator.locks) await navigator.locks.request(`pending:${queueOwner}:${id}`, perform);
+    else await perform();
   }, [answering, ended, heldByOpenQueue, paneId, queueOwner, submitComposerMessage, submitRetention]);
 
 
@@ -2727,9 +2739,9 @@ export function PaneTerminal({
             visible grid carries the pane's name: a screen reader announces which pane
             this is. No tabIndex: xterm's helper textarea takes the keyboard here on attach, so a
             stop on the wrapper would only be an empty one ahead of it. */}
-        <div className={`pane-terminal${paneId === null ? " is-idle" : ""}${!chatView && paneId !== null ? " has-viewport-tools" : ""}`} ref={hostRef} id={viewportId} role={chatView ? undefined : "region"} aria-roledescription={chatView ? undefined : t("Terminal")} aria-label={chatView ? undefined : terminalName} />
+        <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} role={chatView ? undefined : "region"} aria-roledescription={chatView ? undefined : t("Terminal")} aria-label={chatView ? undefined : terminalName} />
         <span className="terminal-font-size" ref={pinchBadgeRef} hidden aria-hidden="true" />
-        {paneId !== null && <TerminalViewportTools key={paneId} viewportIntent={viewportIntent} terminal={terminal} paneId={paneId} viewportId={viewportId}
+        {paneId !== null && <TerminalViewportTools key={paneId} viewportIntent={viewportIntent} terminal={terminal} paneId={paneId}
           pageScroll={chatView ? undefined : pageScroll}
           onApplicationPage={sendApplicationPage}
           enabled={presented && connected && outputReady && !chatView && !held && !ended && !released && !unsupported}
@@ -2815,7 +2827,7 @@ export function PaneTerminal({
               aria-label={t("Queued message {n}", { n: index + 1 })}
               maxLength={MAX_COMPOSER_CHARS}
               disabled={queueStore.isSending(message.id)}
-              spellCheck={false} autoCapitalize="off" autoCorrect="off"
+              spellCheck autoCapitalize="sentences" autoCorrect="on"
               onChange={(event) => { queueStore.edit(queueOwner, message.id, event.target.value); }}
             />
             <div className="composer-queue-actions">

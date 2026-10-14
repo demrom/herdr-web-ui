@@ -70,6 +70,53 @@ it("keeps ordinary immediate sends working on a legacy bridge", async () => {
   }
 });
 
+it("control: a held-copy id on a legacy bridge keeps its existing immediate input behavior", async () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot([]));
+  try {
+    expect(await client.submit("w1:p1", "held copy", "held copy", false, "immediate", undefined, false, "stable-copy-id")).toEqual({ ok: true });
+    expect(submissions(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "held copy\r" }]);
+  } finally { client.close(); }
+});
+
+it("regression: sends the held-copy id independently of the connection request id", async () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit"]));
+  try {
+    const sent = socket.nextSubmission();
+    const result = client.submit("w1:p1", "held copy", "held copy", false, "immediate", undefined, false, "stable-copy-id", 3);
+    const frame = await sent;
+    expect(submissions(socket)[0]?.resend_id).toBe("stable-copy-id");
+    expect(submissions(socket)[0]?.resend_generation).toBe(3);
+    socket.receive({ type: "submit-result", id: frame.id, pane_id: "w1:p1", ok: true });
+    expect(await result).toEqual({ ok: true });
+  } finally { client.close(); }
+});
+
+it("refuses a held-copy resend combined with Send anyway without sending a frame", async () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit"]));
+  try {
+    const sent = socket.nextSubmission();
+    const result = client.submit("w1:p1", "held copy", "held copy", false, "immediate", undefined, true, "combined-copy", 0);
+    const answer = await Promise.race([result, sent.then((frame) => {
+      socket.receive({ type: "submit-result", id: frame.id, pane_id: "w1:p1", ok: true });
+      return result;
+    })]);
+    expect(answer).toMatchObject({ ok: false, code: "invalid_delivery" });
+    expect(submissions(socket)).toEqual([]);
+  } finally { client.close(); }
+});
+
 it("delivers partial clear outcomes unchanged and never retries the submission", async () => {
   const client = new HerdrSocket("ws://test/ws");
   client.connect();
@@ -434,6 +481,23 @@ it("requires attachment readiness and never replays held input after a detach", 
   client.close();
 });
 
+it("marks only the composer's Stop as a Stop on the wire", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit", "input-ready"]));
+  client.attach("w1:p1", 80, 24);
+  socket.receive({ type: "input-ready", pane_id: "w1:p1" });
+  expect(client.sendInput("w1:p1", "\u001b")).toBe(true);
+  expect(client.sendInput("w1:p1", "\u001b", true)).toBe(true);
+  expect(socket.sent.filter((m) => m.type === "input")).toEqual([
+    { type: "input", pane_id: "w1:p1", text: "\u001b" },
+    { type: "input", pane_id: "w1:p1", text: "\u001b", stop: true },
+  ]);
+  client.close();
+});
+
 it("takes a held pane only from a server that knows how, while interacting with an attached pane", () => {
   const takes = (socket: FakeSocket) => socket.sent.filter((m) => m.type === "take-over");
   const old = new HerdrSocket("ws://test/ws");
@@ -511,6 +575,33 @@ it("releases the shared grid once when the chat lens covers a terminal this tab 
   client.releaseSize("w1:p1");
   expect(releases()).toHaveLength(1);
   client.close();
+});
+
+it("keeps a visible unfocused grid while changing only its reconnect policy", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  const releases = () => socket.sent.filter((m) => m.type === "release-size");
+  try {
+    client.attach("w1:p1", 120, 40);
+    // A plain blur does not hide the terminal or discard its fallback grid.
+    client.keepSize("w1:p1", false);
+    // Regression (fails on #1085): no release until the terminal really stops showing.
+    expect(releases()).toEqual([]);
+    client.releaseSize("w1:p1");
+    client.releaseSize("w1:p1");
+    expect(releases()).toEqual([{ type: "release-size", pane_id: "w1:p1" }]);
+    client.resize("w1:p1", 120, 40);
+    client.keepSize("w1:p1", false);
+    socket.open();
+    // Control: blur still changes the reconnect policy, without replaying a release.
+    expect(socket.sent.filter((m) => m.type === "attach").at(-1))
+      .toEqual({ type: "attach", pane_id: "w1:p1", cols: 120, rows: 40, flow_control: "ack", keep_size: true });
+    expect(releases()).toHaveLength(1);
+  } finally {
+    client.close();
+  }
 });
 
 it("releases the shared grid once when a hidden terminal returns directly to Chat", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,10 @@ import type { InteractivePrompt } from "../shared/protocol.ts";
 import { answerKeys, claudeClearableDraft, claudeInputBoxText, claudeInputDraft, claudeInputEmpty, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
+// Real omo-ai 5.1.30 pane.read captures at 120 and 45 columns, with the recorded open calls.
+const omoPendingFixture = (name: string) => readFileSync(new URL(`./fixtures/omo-pending-5.1.30-${name}`, import.meta.url), "utf8");
+const omoExtensionTail = omoPendingFixture("extension-tail.txt");
+const withOmoExtensionTail = (screen: string) => screen.replace(/(❯\n─+\n)/, `$1${omoExtensionTail}`);
 const CLAUDE_BACKGROUND_APPROVAL_FOOTER = "Esc to cancel · ctrl+x ctrl+k twice to stop background agents";
 const claudeBackgroundApproval = (selected: number, footer = CLAUDE_BACKGROUND_APPROVAL_FOOTER) => {
   const row = (index: number, label: string) => `${index === selected ? " ❯ " : "   "}${index + 1}. ${label}`;
@@ -1500,6 +1504,66 @@ ${rule60}
   // the same call asked without waiting: omo accepts it at once and folds it into a widget
   const accepted = (id: string) => record({ role: "toolResult", toolCallId: id, content: [{ type: "text", text: "Question accepted; the answer will arrive as a user message." }], details: { accepted: true, status: "pending" }, isError: false });
   const asyncAsking = `${asking.replace('"waitForAnswer":true', '"waitForAnswer":false')}\n${accepted("call-1")}\n${record({ role: "assistant", content: [{ type: "text", text: "meanwhile" }], stopReason: "stop" })}`;
+
+  for (const count of ["one", "two"]) for (const width of ["wide", "narrow"]) {
+    test(`reads the real 5.1.30 ${count}-question ${width} widget with its pending call`, () => {
+      const open = openOmoAsks(omoPendingFixture(`${count}.jsonl`));
+      const question = open[0]!.questions[0]!;
+      const prompt = parseInteractivePrompt("pi", omoPendingFixture(`${count}-${width}.txt`), null, false, open);
+      expect(prompt).toMatchObject({
+        agent: "omo", kind: "question", question: question.question, options: question.options,
+        multi_select: question.multiSelect, custom_option_index: question.multiSelect ? null : question.options.length,
+        title: count === "one" ? question.header : "Question 1 of 2",
+      });
+    });
+  }
+
+  for (const count of ["one", "two"]) for (const width of ["wide", "narrow"]) {
+    test(`reads the real 5.1.30 ${count}-question ${width} widget with extension status below the box`, () => {
+      const open = openOmoAsks(omoPendingFixture(`${count}.jsonl`));
+      const screen = withOmoExtensionTail(omoPendingFixture(`${count}-${width}.txt`));
+      expect(parseInteractivePrompt("pi", screen, null, false, open)).toMatchObject({
+        agent: "omo", kind: "question", question: open[0]!.questions[0]!.question,
+      });
+      expect(parseInteractivePrompt("pi", `${screen}$ echo after\n`, null, false, open)).toBeNull();
+    });
+  }
+
+  test("reads an OmO waiting form with extension status under its rule", () => {
+    const extended = first.replace(footer, footer.replace(`${rule}\n`, `${rule}\n${omoExtensionTail}`));
+    expect(parseInteractivePrompt("pi", extended)).toMatchObject({ agent: "omo", kind: "question", title: "Question 1 of 2" });
+    expect(parseInteractivePrompt("pi", `${extended}user@host:~/project$ `)).toBeNull();
+    expect(parseInteractivePrompt("pi", extended.replace(omoExtensionTail, `${omoExtensionTail} ordinary output\n`.repeat(4)))).toBeNull();
+  });
+
+  test("reads OmO typing and review forms with extension status under their rule", () => {
+    const typing = form(` → 표시 위치    월 한도    Submit
+ 음성 사용량과 추정 비용을 어디에 보여줄까요?
+ → 1. 설정 > 음성 입력 (추천)
+   Type your own answer...
+ Your answer (enter to save, ↑↓ back to options, esc to discard)
+> 안녕
+ Submit (0/2 answered) — Enter advances
+ enter save and next  ↑↓ back to options  tab next question  esc discard
+`);
+    const review = form(`   표시 위치 ✓    월 한도 ✓  → Submit
+ Review your answers
+   표시 위치: 설정 > 음성 입력 (추천)
+   월 한도: 한도 없음
+
+ Comment (optional; unanswered questions are reported)
+>
+ Submit (2/2 answered)
+ enter submit  ↑ review answers  shift+tab back  tab next question  esc back
+`);
+    for (const screen of [typing, review]) {
+      const expected = parseInteractivePrompt("pi", screen);
+      expect(expected).not.toBeNull();
+      const extended = screen.replace(footer, footer.replace(`${rule}\n`, `${rule}\n${omoExtensionTail}`));
+      expect(parseInteractivePrompt("pi", extended)).toEqual(expected);
+      expect(parseInteractivePrompt("pi", `${extended}$ `)).toBeNull();
+    }
+  });
 
   test("keeps a call asked without waiting open until it is settled", () => {
     expect(openOmoAsks(asyncAsking).map((ask) => [ask.questions[0]!.header, ask.wait])).toEqual([["표시 위치", false]]);
@@ -3081,6 +3145,33 @@ ${omoRule}
       finally { child.kill(); await child.exited; }
     });
   }
+
+  for (const count of ["one", "two"]) for (const width of ["wide", "narrow"]) {
+    test.skipIf(process.platform !== "linux")(`discovers the real 5.1.30 ${count}-question ${width} widget through the prompt route`, async () => {
+      await withOmo(async (pane) => {
+        appendFileSync(pane.omo!.path, JSON.stringify({ type: "custom", customType: "ask-user:settlement", data: { requestId: "q1" } }) + "\n" + omoPendingFixture(`${count}.jsonl`));
+        pane.screen = omoPendingFixture(`${count}-${width}.txt`);
+        pane.agent = "pi";
+        pane.status = "blocked";
+        const question = openOmoAsks(omoPendingFixture(`${count}.jsonl`))[0]!.questions[0]!;
+        const prompt = await card();
+        expect(prompt).toMatchObject({
+          agent: "omo", kind: "question", question: question.question, options: question.options,
+          multi_select: question.multiSelect, custom_option_index: question.multiSelect ? null : question.options.length,
+        });
+      });
+    });
+  }
+
+  test.skipIf(process.platform !== "linux")("discovers a pending question with extension status below the input box", async () => {
+    await withOmo(async (pane) => {
+      appendFileSync(pane.omo!.path, JSON.stringify({ type: "custom", customType: "ask-user:settlement", data: { requestId: "q1" } }) + "\n" + omoPendingFixture("one.jsonl"));
+      pane.screen = withOmoExtensionTail(omoPendingFixture("one-wide.txt"));
+      pane.agent = "pi";
+      pane.status = "blocked";
+      expect(await card()).toMatchObject({ agent: "omo", kind: "question", multi_select: true });
+    });
+  });
 
   // Claude Code 2.1.294, live: a message it holds back for an invisible character
   const heldRule = "─".repeat(80);

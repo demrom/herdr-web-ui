@@ -1015,7 +1015,6 @@ export const KO: Record<string, string> = {
   "Move tab left": "탭을 왼쪽으로 이동",
   "Move tab right": "탭을 오른쪽으로 이동",
   "Tab order did not refresh. Try again.": "탭 순서가 갱신되지 않았습니다. 다시 시도해 주세요.",
-  "Terminal scrollback": "터미널 기록",
   "Scroll failed: {reason}": "스크롤 실패: {reason}",
   "Plan: {done} of {total} done": "계획: {total}개 중 {done}개 완료",
   "Plan": "계획",
