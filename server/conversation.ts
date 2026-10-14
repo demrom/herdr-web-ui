@@ -258,6 +258,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
   /** the agent's last entry called a tool: its turn is not over, whatever is written meanwhile */
   let atWork = false;
+  /** injected feedback can resume the model without a human prompt after a completed reply */
+  let completed = false;
   /** where a notice goes: before the turn at work it was written in, else at the end */
   const noticeAt = (): number => atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
   /** the notifications already drawn: a completion is recorded in up to three places */
@@ -276,7 +278,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
-    if (last !== undefined && last.role === "assistant") return last;
+    if (last !== undefined && last.role === "assistant" && !completed) return last;
     const turn: ConversationTurn = { role: "assistant", ts: ts ?? null, parts: [] };
     turns.push(turn);
     return turn;
@@ -412,6 +414,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
       const turn = assistantTurn(entry.timestamp);
       // an entry that names no stop reason is still at work when it calls a tool
       const stop = entry.message?.stop_reason;
+      completed = stop === "end_turn";
       atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "tool_use"));
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
