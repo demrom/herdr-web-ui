@@ -1603,7 +1603,8 @@ button {
   }
 }
 
-/* the key bar (KeyBar.css) shows under the same query and carries env(safe-area-inset-bottom) itself */
+/* the key bar (KeyBar.css) shows under the same query and carries env(safe-area-inset-bottom) itself,
+   the one bar that reaches the bottom of the screen (KeyBar.tsx) */
 @media (pointer: coarse), (max-width: 768px) {
   .terminal-host:has(.key-bar) {
     padding-bottom: 0; /* no pane = no bar, and the host keeps the inset */

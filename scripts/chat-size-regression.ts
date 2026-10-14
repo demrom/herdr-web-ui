@@ -143,7 +143,9 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
     // an agent pane opens in the chat lens on a phone; the shell under it answers `stty size`
     await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state: "idle" });
     await agentListed(origin, paneId);
-    const size = shellSize(paneId);
+    // This scenario resizes the pty while probing it. Read each shell answer from a file:
+    // reflow can erase a completed answer from pane.read's screen snapshot.
+    const size = shellSize(paneId, cwd);
     const open = (options: Parameters<Browser["newContext"]>[0], settings: object) => openRecording(browser, contexts, origin, paneId, options, settings);
     const sent = (page: Page) => page.evaluate(() => (window as unknown as { frames_: { dir: string; type: string; keep_size?: boolean }[] }).frames_.filter((f) => f.dir === "out" && (f.type === "attach" || f.type === "resize")));
 
