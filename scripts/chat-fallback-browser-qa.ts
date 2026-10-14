@@ -7,6 +7,9 @@ import { chromium } from "playwright-core";
 import { build as viteBuild } from "vite";
 import { CONTENT_SECURITY_POLICY } from "../server/static.ts";
 import { chromePath } from "./chrome-path.ts";
+import { parseCodexTranscript } from "../server/codex.ts";
+import { parseClaudeTranscript } from "../server/conversation.ts";
+import type { ConversationTurn } from "../shared/protocol.ts";
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-chat-fallback-")));
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -18,6 +21,8 @@ try {
   await viteBuild({ configFile: join(repo, "vite.config.ts"), root, publicDir: false, logLevel: "warn", build: { outDir: output, emptyOutDir: true } });
   const terminalReads: string[] = [];
   let structured = false, resolveAgent!: () => void, agentReadArrived!: () => void;
+  let source = "codex-transcript";
+  let turns: ConversationTurn[] = [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Structured conversation arrived" }] }];
   // resolved by the server's handler: a browser-side waitForRequest can win the race against it
   const agentRead = new Promise<void>((resolve) => { agentReadArrived = resolve; });
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
@@ -25,7 +30,7 @@ try {
     if (url.pathname === "/api/pane/prompt") return Response.json({ prompt: null });
     // the chat's skill matcher asks for the pane's commands
     if (url.pathname === "/api/pane/commands") return Response.json({ commands: [] });
-    if (url.pathname === "/api/pane/conversation") return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? "codex-transcript" : "scrollback", cursor: null, turns: structured && pane === "agent" ? [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Structured conversation arrived" }] }] : [] });
+    if (url.pathname === "/api/pane/conversation") return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? source : "scrollback", cursor: null, turns: structured && pane === "agent" ? turns : [] });
     if (url.pathname === "/api/pane/read") {
       terminalReads.push(pane ?? "");
       if (pane === "error") return Response.json({ error: { code: "read_failed", message: "Terminal output unavailable" } }, { status: 500 });
@@ -78,6 +83,47 @@ try {
   await page.evaluate(() => window.chatFallbackQA.pane("empty"));
   await page.getByText("No conversation yet — say something below", { exact: true }).waitFor();
   assert.equal(await page.locator(".chat-terminal-fallback").count(), 0, "an empty structured conversation keeps its ordinary prompt");
+  // Native parser output crosses HTTP into the real ChatView. Later activity must not
+  // move a final reply into the fold or duplicate it; narration and tools stay there.
+  const jsonl = (...records: unknown[]) => records.map((record) => JSON.stringify(record)).join("\n");
+  const response = (payload: unknown) => ({ type: "response_item", payload });
+  for (const agent of ["codex", "claude"]) {
+    const answer = `The fictional ${agent} catalog contains three books.`;
+    const narration = `Checking the ${agent} catalog.`;
+    source = `${agent}-transcript`;
+    turns = agent === "codex" ? parseCodexTranscript(jsonl(
+      response({ type: "message", role: "assistant", phase: "commentary", content: [{ type: "output_text", text: narration }] }),
+      response({ type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: answer }] }),
+      response({ type: "function_call", name: "exec_command", call_id: "cleanup", arguments: '{"cmd":"true"}' }),
+    )) : parseClaudeTranscript(jsonl(
+      { type: "assistant", message: { content: [{ type: "text", text: answer }], stop_reason: "end_turn" } },
+      { type: "user", isMeta: true, userType: "external", message: { role: "user", content: "Stop hook feedback: Verify the fictional catalog." } },
+      { type: "system", subtype: "stop_hook_summary" },
+      { type: "assistant", message: { content: [{ type: "text", text: narration }, { type: "tool_use", id: "cleanup", name: "Bash", input: { command: "true" } }], stop_reason: "tool_use" } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "cleanup", content: "Verified" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "Catalog verification complete." }], stop_reason: "end_turn" } },
+    ));
+    await page.evaluate((kind) => { window.chatFallbackQA.agent(kind); window.chatFallbackQA.pane("agent"); window.chatFallbackQA.refresh(); }, agent);
+    await page.getByText(answer, { exact: true }).waitFor();
+    const work = page.locator(".work-block");
+    const head = work.locator(".work-block-head");
+    await head.waitFor();
+    if (await head.getAttribute("aria-expanded") === "true") await head.click();
+    await work.locator(".work-block-rows").waitFor({ state: "hidden" });
+    assert.equal(await work.getByText(answer, { exact: true }).count(), 0, "the reply is outside work");
+    assert.equal(await page.getByText(answer, { exact: true }).count(), 1, "the reply appears once");
+    assert.equal(await page.getByText(answer, { exact: true }).isVisible(), true, "folding work keeps the reply visible");
+    if (agent === "claude") {
+      assert.equal(await page.getByText("Catalog verification complete.", { exact: true }).isVisible(), true, "the hook continuation's short reply is also visible");
+      assert.equal(await page.getByText(/Stop hook feedback:/).count(), 0, "injected hook context is not a user message");
+    }
+    await head.click();
+    await work.getByText(narration, { exact: true }).waitFor();
+    assert.equal(await work.locator(".work-row-head").count(), 1, "the tool stays inside work");
+    await head.click();
+    if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `${agent}-reply-outside-work.png`) });
+    console.log(`PASS ${agent} native reply stays visible once outside folded work; narration and tool remain grouped`);
+  }
   assert.deepEqual(errors, []);
   console.log("chat fallback: browser OK (no hidden terminal reads, opened stalled output cannot block structured refresh, late cleanup, non-agent inline output, fallback error announcement and accurate empty state)");
 
