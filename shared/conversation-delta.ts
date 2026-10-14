@@ -16,7 +16,7 @@ export async function conversationDelta(body: ConversationResponse, cursor: stri
     try {
       const previous: unknown = JSON.parse(atob(cursor.replaceAll("-", "+").replaceAll("_", "/")));
       if (Array.isArray(previous) && previous.length === 2 && previous[0] === scope
-        && Array.isArray(previous[1]) && previous[1].length <= 100
+        && Array.isArray(previous[1])
         && previous[1].every((hash: unknown) => typeof hash === "string" && /^[A-Za-z0-9_-]{43}$/.test(hash))) {
         const known: string[] = previous[1];
         for (let offset = 0; offset < known.length; offset++) {

@@ -139,6 +139,15 @@ try {
   await toggle.click();
   await page.getByText(/MB in 1 chats/).waitFor();
   await page.keyboard.press("Escape");
+  await settings(page);
+  await page.getByLabel("Maximum chat cache (MB)", { exact: true }).fill("17");
+  await page.keyboard.press("Escape");
+  await settings(page);
+  assert.equal(await page.getByLabel("Maximum chat cache (MB)", { exact: true }).inputValue(), "17", "Escape commits the pending cache limit");
+  await page.getByLabel("Maximum chat cache (MB)", { exact: true }).fill("500");
+  await page.getByLabel("Maximum chat cache (MB)", { exact: true }).press("Enter");
+  await page.keyboard.press("Escape");
+  console.log("PASS Escape commits the pending cache limit without blur");
   held = true;
   await page.reload();
   await until(() => pending.length > 0, "identity validation held");
@@ -231,14 +240,23 @@ try {
       for (const theme of ["dark", "light"] as const) {
         await settings(pane); await openSettingsPage(pane, "Appearance");
         await pane.getByRole("button", { name: theme === "dark" ? "Dark" : "Light", exact: true }).click();
-        await pane.getByRole("button", { name: "Off", exact: true }).click();
         await pane.getByRole("button", { name: "Close settings", exact: true }).click();
         await pane.locator(".settings-dialog").waitFor({ state: "detached" });
+        await until(async () => await pane.locator("body > [inert][aria-hidden=true]").count() === 0, "closed settings sheet has left the screenshot");
         await pane.evaluate(async () => { await document.fonts.ready; await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))); });
         await pane.locator(".chat-edge-loading.is-older").waitFor();
         await pane.screenshot({ path: join(evidence, `loading-${width === 390 ? "phone" : "desktop"}-${theme}.png`), animations: "disabled" });
       }
     }
+    if (evidence) {
+      await pane.setViewportSize({ width: 390, height: 844 });
+      await settings(pane); await openSettingsPage(pane, "Appearance");
+      await pane.getByRole("button", { name: "Dark", exact: true }).click();
+      await pane.getByRole("button", { name: "Close settings", exact: true }).click();
+      await pane.locator(".settings-dialog").waitFor({ state: "detached" });
+    }
+    assert.deepEqual(pane.viewportSize(), { width: 390, height: 844 }, "evidence preserves the phone touch viewport");
+    assert.equal(await pane.evaluate(() => document.documentElement.dataset.theme), "dark", "evidence preserves the touch theme");
     const anchor = await log.locator("[data-chat-row]").first().evaluate((row) => ({ key: (row as HTMLElement).dataset.chatRow!, offset: row.getBoundingClientRect().top - row.closest("[role=log]")!.getBoundingClientRect().top }));
     const cdp = await edges.newCDPSession(pane);
     const rect = await log.boundingBox();
@@ -251,6 +269,64 @@ try {
     await until(async () => Math.abs(await log.locator(`[data-chat-row='${anchor.key}']`).evaluate((row) => row.getBoundingClientRect().top - row.closest("[role=log]")!.getBoundingClientRect().top) - anchor.offset) <= 1, "visible-edge indicator disappears without shifting the touched row");
     await edges.close(); bodies.set(first, original);
     console.log("PASS slow visible older edge is labeled and indicator disappearance preserves the touched row within 1px");
+  }
+
+  {
+    const wide = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: { "x-fixture-client": "many-turns" } });
+    await wide.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    const original = bodies.get(first)!;
+    bodies.set(first, { source: "claude-transcript", history_id: "fictional-many-turns", cursor: null,
+      turns: Array.from({ length: 200 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Many-turn row ${index}. ` + "Fictional paragraph. ".repeat(50) }] })) });
+    const pane = await wide.newPage();
+    await pane.goto(`http://cache.test:${server.port}/`);
+    await pane.locator(".chat-turn-agent").first().waitFor();
+    await pane.waitForLoadState("networkidle");
+    const at = records.length;
+    await pane.reload();
+    await pane.locator(".chat-turn-agent").first().waitFor();
+    await until(() => records.slice(at).some((record) => record.client === "many-turns" && record.delta), "200-turn cached page validated");
+    assert.equal(records.slice(at).find((record) => record.client === "many-turns" && record.delta)!.turns, 0, "a 200-turn cursor validates without a full-page fallback");
+    bodies.get(first)!.turns.push({ role: "assistant", ts: null, parts: [{ kind: "text", text: "Many-turn appended answer" }] });
+    const appendAt = records.length;
+    await pane.reload();
+    await pane.getByText("Many-turn appended answer", { exact: true }).waitFor();
+    assert.equal(records.slice(appendAt).find((record) => record.client === "many-turns" && record.delta)!.turns, 1, "a large page sends only its appended turn");
+    await wide.close(); bodies.set(first, original);
+    console.log("PASS cursors for 200-turn pages transfer only changed turns");
+  }
+
+  {
+    const fallback = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: { "x-fixture-client": "full-fallback" } });
+    await fallback.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+    const original = bodies.get(first)!;
+    const turn = (index: number) => ({ role: index % 2 ? "assistant" as const : "user" as const, ts: null, parts: [{ kind: "text" as const, text: `Fallback turn ${index} ` + "x".repeat(2000) }] });
+    bodies.set(first, { source: "claude-transcript", history_id: "fictional-full-fallback", cursor: "fallback-100", turns: Array.from({ length: 100 }, (_, index) => turn(100 + index)) });
+    earlier.set("fallback-100", { ...bodies.get(first)!, cursor: null, turns: Array.from({ length: 100 }, (_, index) => turn(index)) });
+    const pane = await fallback.newPage();
+    await pane.goto(`http://cache.test:${server.port}/`);
+    await pane.locator(".chat-turn-agent").first().waitFor();
+    await settings(pane);
+    await until(async () => Number.parseFloat(await pane.getByText(/MB in 1 chats/).innerText()) > 0.4, "fallback history saved in full");
+    const usedBefore = Number.parseFloat(await pane.getByText(/MB in 1 chats/).innerText());
+    bodies.get(first)!.turns.at(-1)!.parts = [{ kind: "text", text: "Fresh fallback update" }];
+    const at = records.length;
+    await pane.route("**/pane/conversation?*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.has("delta")) url.searchParams.set("delta", "invalid-cursor");
+      await route.continue({ url: url.href });
+    });
+    await until(() => records.slice(at).some((record) => record.client === "full-fallback" && record.cursor === "invalid-cursor"), "server returns a complete page for a rejected cursor");
+    await pane.getByText("Fresh fallback update", { exact: true }).waitFor({ state: "attached" });
+    assert(Math.abs(Number.parseFloat(await pane.getByText(/MB in 1 chats/).innerText()) - usedBefore) <= 0.01, "full fallback retains saved older pages and usage");
+    await pane.keyboard.press("Escape");
+    await pane.unroute("**/pane/conversation?*");
+    await pane.reload();
+    await pane.locator(".chat-turn-agent").first().waitFor();
+    await pane.keyboard.press("ControlOrMeta+f");
+    await pane.getByRole("searchbox", { name: "Find in messages", exact: true }).fill("Fallback turn 0 ");
+    await pane.locator(".find-bar-count").getByText("1 of 1", { exact: true }).waitFor();
+    await fallback.close(); bodies.set(first, original); earlier.delete("fallback-100");
+    console.log("PASS rejected delta cursors preserve older saved history, usage and search");
   }
 
   // A rewrite with the same native identity must discard the old prefix.
@@ -340,6 +416,12 @@ try {
         await page.screenshot({ path: join(evidence, `cache-${width === 390 ? "phone" : "desktop"}-${theme}.png`) });
       }
     }
+  }
+  if (evidence) {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettingsPage(page, "Appearance");
+    await page.getByRole("button", { name: "Dark", exact: true }).click();
+    await openSettingsPage(page, "Chat");
   }
   await page.getByRole("button", { name: "Clear cache on this device", exact: true }).click();
   await page.getByText("0.00 MB in 0 chats", { exact: true }).waitFor();
@@ -1147,6 +1229,8 @@ try {
     await recovery.locator('[data-section="history-cache"]').evaluate((node) => node.scrollIntoView({ block: "start" }));
     await recovery.screenshot({ path: join(process.env.UI_EVIDENCE_DIR!, "oversized-phone.png"), animations: "disabled" });
   }
+  if (evidence) await recovery.setViewportSize({ width: 1280, height: 900 });
+  assert.deepEqual(recovery.viewportSize(), { width: 1280, height: 900 }, "oversized evidence preserves the desktop viewport");
   await recovery.getByLabel("Maximum chat cache (MB)", { exact: true }).fill("10");
   await recovery.getByLabel("Maximum chat cache (MB)", { exact: true }).press("Enter");
   await recovery.keyboard.press("Escape");

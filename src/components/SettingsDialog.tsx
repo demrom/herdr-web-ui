@@ -306,8 +306,12 @@ function ChatPage() {
     const parsed = Number(cacheLimit);
     const value = cacheLimit.trim() && Number.isFinite(parsed) ? Math.min(10000, Math.max(1, Math.floor(parsed))) : settings.chatHistoryCacheMB;
     setCacheLimit(String(value));
-    update({ chatHistoryCacheMB: value });
+    if (value !== settings.chatHistoryCacheMB) update({ chatHistoryCacheMB: value });
   };
+  // Escape closes the dialog without blurring the field.
+  const commitCacheLimitRef = useRef(commitCacheLimit);
+  commitCacheLimitRef.current = commitCacheLimit;
+  useEffect(() => () => commitCacheLimitRef.current(), []);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => { void historyCacheUsage().then((next) => { if (!cancelled) setUsage(next); }); };

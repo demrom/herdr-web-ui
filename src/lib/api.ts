@@ -437,7 +437,7 @@ async function fetchCachedConversation(paneId: string, machineId: string, url: s
   const alreadyStored = response.status === 304 && saved.page !== undefined
     && saved.page.etag === etag && saved.page.body.delta_cursor === body.delta_cursor;
   if (!alreadyStored && body.source !== "scrollback" && conversationCacheEpochs.get(chat) === saved.epoch) {
-    const reset = known !== undefined && response.status !== 304 && (body.history_id !== known.body.history_id || body.cache_session !== known.body.cache_session || (body.replace_from === 0 && known.body.turns.length > 1 && request.searchParams.has("delta")));
+    const reset = known !== undefined && response.status !== 304 && (body.history_id !== known.body.history_id || body.cache_session !== known.body.cache_session);
     let latestUrl: string | undefined;
     // Commit the held-start page and its reopening alias in the same atomic transaction.
     if (request.searchParams.has("from")) {
