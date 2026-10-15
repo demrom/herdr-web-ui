@@ -56,6 +56,11 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 | Working/tint | `--status-working-tint` | `rgba(108, 184, 214, 0.14)` | `rgba(21, 90, 114, 0.12)` |
 | Blocked/tint | `--status-blocked-tint` | `rgba(255, 123, 112, 0.14)` | `rgba(168, 35, 35, 0.12)` |
 | Done/tint | `--status-done-tint` | `rgba(147, 195, 107, 0.14)` | `rgba(47, 99, 23, 0.12)` |
+| Indicator/working | `--indicator-working` | `#f9e2af` | `#df8e1d` |
+| Indicator/blocked | `--indicator-blocked` | `#f38ba8` | `#d20f39` |
+| Indicator/done | `--indicator-done` | `#94e2d5` | `#179299` |
+| Indicator/idle | `--indicator-idle` | `#a6e3a1` | `#40a02b` |
+| Indicator/unknown | `--indicator-unknown` | `#6c7086` | `#9ca0b0` |
 | Danger/tint | `--danger-tint` | `rgba(255, 123, 112, 0.12)` | `rgba(168, 35, 35, 0.1)` |
 | Danger/text | `--danger-text` | `#ffd9d4` | `#8f1d1d` |
 | Notice | `--notice` | `#e8c55c` | `#7a5a00` |
@@ -284,6 +289,11 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   explicit header notice, never a misleading jump. Markdown reader tabs retain the requested line.
   Copy file copies the loaded text; when the clipboard is out of reach it selects the source
   `<pre>`, or shows a virtualized source as one readonly text box, selected.
+- Mod+Shift+E focuses the selected pane's existing composer, terminal input line or xterm input,
+  preferring a mounted secret-input field. The callback is synchronous with the hardware key
+  event, scoped to the active, presented pane and its PC; a modal or observe mode blocks it.
+  It sends no text or keys and never takes an attach. The binding follows the existing shortcut
+  customization and Mod+Shift policy.
 - All settings share one sanitized `localStorage["herdr-web-ui:settings"]` record.
 
 ## 4. Spacing & Layout
@@ -487,9 +497,12 @@ One set for both themes: the card is island black wherever it shows.
   worktree actions, and Expand/Collapse for a group. Dismissal restores the prior focus. The
   explicit `⋯` uses those same actions at its button. An edited name keeps the browser's paste menu;
   touch long press still reorders. Agents and PC headers keep the browser's context menu.
-  An agent row selects its pane. Its `⋯` (shown as a workspace row's is: on hover, focus,
-  selection, an open menu, and always on touch) opens its menu with one item, Pin agent or Unpin
-  agent; a right-click opens the same menu at the pointer and leaves the focus where it was.
+  An agent row selects its pane. Its `⋯` (drawn as a workspace row's is) opens its menu with one
+  item, Pin agent or Unpin agent; a right-click opens the same menu at the pointer and leaves the
+  focus where it was.
+  A desktop (`pointer: fine` wider than 768px, the tab strip's rule) draws no row `⋯`: a
+  right-click or the context-menu key opens the menu, at the pointer or at the row, and dismissal
+  returns the focus where it was.
 
 - Close follows herdr's `ui.confirm_close`: a workspace close, or a pane close that takes its
   workspace with it, asks in a confirm first. A busy pane also asks before it stops. After a
@@ -518,6 +531,13 @@ One set for both themes: the card is island black wherever it shows.
   draws a warning triangle in `--status-blocked`. The element, its label and its tooltip are there
   for every state, and each drawn state has its own glyph as well as its color. Background tasks
   are a quiet count beside it (`.background-count`), not a badge.
+- Settings → Status indicators can trade that default (Classic) for herdr's TUI marks, as its
+  `[ui] status_indicators` draws them, for every state in mono text. Dots: `●` for working,
+  blocked and done, `○` for ready, `·` for unknown. Symbols: `◐` working, `×` blocked, `✓` done,
+  `○` ready, `·` unknown. Their colors are herdr's default theme's, the `--indicator-*` tokens
+  (Catppuccin Mocha, Latte in light): working yellow, blocked red, done teal, ready green, unknown
+  grey. Working breathes as the dot does; BG, which herdr does not have, holds working's glyph still.
+  A tab's mark follows the same choice, held still.
 
 ### Pill (`.pill`)
 - Mono metadata at `--chip-h`. Offline is the one header pill that stays, and uses danger tokens. A deep link that could not open what it named, and Copy link, say so in a plain `.header-note` pill for a moment (8 s, 1.6 s for Link copied). The note takes the flexible context's place and ellipsizes when narrow, keeping the lens and More controls in view.
@@ -585,9 +605,11 @@ One set for both themes: the card is island black wherever it shows.
   share the existing combined machine roster and its SSE updates; neither adds a status subscription.
   A disconnected PC's saved workspace and agent rows are dimmed, inert and draw no state until that PC reconnects.
 - The Agents list is flat and every row names its own place. Pinned agents (pinned from a row's
-  menu) stand first, in the order they were pinned, under a **Pinned** head in `--text-dim`
-  `--fs-xs` aligned with the rows' titles; the rest follow `--space-2` below in the chosen order,
-  with no head. Without pins there is no head. Pins are shared with the other browsers of the server.
+  menu) stand first, in the order they were pinned, in a card (a `--hairline` `--border` edge,
+  `--radius-lg`, `--space-1` padding, no fill, so hover and selection read inside it as elsewhere),
+  each with a `--space-3` `--accent` pin after its title; the rest follow `--space-2` below in the
+  chosen order. The Agents head is the only head (the pinned list is labelled **Pinned** for screen
+  readers); without pins there is no card. Pins are shared with the other browsers of the server.
 - Appearance's **Sidebar rows** is **Two lines** by default; on **One line** a workspace row is
   its name. Two lines draws the row as the roster did before it was one line, on an agent row's
   height and type: the title of the pane the row opens, and under it in `--text-dim` `--fs-xs` the place,
@@ -614,9 +636,16 @@ One set for both themes: the card is island black wherever it shows.
   where it lands. Alt+Up/Down moves the focused row one step at a time.
   Dragging is disabled while a name field is open. Each workspace's `⋯` opens its row menu
   (`.row-menu-toggle`: no width at rest; shown on hover, focus, selection and while its menu is
-  open; always on touch). Inline server failures
+  open; always on touch; not drawn on a desktop, where a right-click opens the menu). Inline server failures
   stay beside their workspace. A repository's workspace moves past the
   next or previous group with its worktrees, and a worktree moves among its siblings only.
+- A workspace is pinned from its row menu (**Pin workspace** / **Unpin workspace**, first in the
+  menu), as Paseo pins a chat: pinned workspaces leave their place and stand first in their PC's
+  list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`) with the same
+  `--accent` pin after the name. A pinned repository's workspace brings its worktrees; a pinned
+  worktree leaves its repository's group, which stays. Pinned rows are not dragged and `Alt+↑/↓`
+  does not move them; the rest reorder among the rows they show. The pins are the Agents list's
+  shared list (a workspace's key is `machine:workspace:id`), so other browsers of the server see them.
 - A title that is a working directory written out (`/home/me/dev/api`, `~/dev/api`, `C:\work\api`)
   shows as its last folder, here, in the header, the palette and every alert; the full path stays
   in the row's tooltip. Parent workspace names stay fixed and linked checkouts are named by branch;
@@ -840,15 +869,7 @@ One set for both themes: the card is island black wherever it shows.
   The web ESM patch orders pooled DOM slots before paint, uses state-preserving
   `moveBefore` where available, and clears stale prepend locks on explicit navigation.
   These changes preserve native drag/copy order and prevent a later layout from undoing
-  Find navigation; the React Native and keyboard patches from t3code are not included.
-- The chat-local **Find in messages** button and Mod+F search supplied message source,
-  including folded work, rather than the mounted DOM window. The existing Mod+Shift+F
-  terminal action remains unchanged. The panel takes its own space above the transcript,
-  never covering a match, with existing search controls and `--accent-tint` match emphasis. A selectable
-  source excerpt makes a match in folded content readable without expanding every tool.
-  **Search earlier messages** reads older pages sequentially until a new match or the
-  beginning; Cancel stops further pages. The scope label distinguishes loaded source from
-  history that has not been read. Escape closes the panel and restores its button's focus.
+  a jump to a turn; the React Native and keyboard patches from t3code are not included.
 - The chat lens is a centered `--chat-w` transcript over the still-attached terminal surface.
   At the Default chat width the lane follows the pane: min 820px, max 60rem (960px at a 16px
   root), 71% of the pane (`.terminal-stack`) between. `PaneTerminal` measures the pane and writes
@@ -1078,7 +1099,8 @@ One set for both themes: the card is island black wherever it shows.
   a `--border` hairline box with `--radius-sm` corners.
   Nothing in it is pressed. `composerStrip` (`src/lib/composerStrip.ts`) decides what it draws from
   the composer's optional `cwd` and `branch`: a blank one is absent, and with neither there is no
-  strip at all. The card stands over it (`z-index: 1`, so its popovers go with it and still rise
+  strip at all. A phone (`640px` and below, or a coarse pointer) draws no strip: the screen is the
+  conversation's. The card stands over it (`z-index: 1`, so its popovers go with it and still rise
   over the transcript).
 - Empty chat (`.composer-greeting`): one line on the composer's column, directly over it,
   `What should <agent> do in <folder>?` in `--text-strong`, `--fs-display`, `--fw-semibold`, `--tracking-display`, centred,
@@ -1399,6 +1421,12 @@ One set for both themes: the card is island black wherever it shows.
   `pane.scroll`, which moves the shared viewport for every client, including the TUI. Requests
   retain their owning PC/pane, and a failed request displays an error instead of inventing a
   local history position.
+- While herdr's viewport is above the bottom and the pane is interactive, a round ArrowDown
+  "Jump to bottom" button floats over the grid's bottom-right corner and sends `pane.scroll`
+  offset 0, the one-tap way back to the live bottom now that no scrollbar offers End. It uses
+  the chat lens' round button form (`--control-h`, `--touch-target` on coarse pointers,
+  `--radius-pill`, `--shadow-pop`), keeps focus in the terminal, and is hidden at the bottom, in
+  read-only views and while Find owns the viewport. A grown touch input line floats over it.
 - Mod+Shift+PageUp/PageDown pages the selected pane only, preserving chat composer focus and
   selection. Chat moves instantly by its viewport minus one prose line;
   Terminal uses native viewport rows minus one. A page still

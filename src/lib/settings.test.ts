@@ -55,6 +55,7 @@ describe("telemetry settings snapshot", () => {
       sidebarRows: "one",
       agentOrder: "activity",
       agentMarks: "mono",
+      statusIndicators: "symbols",
       palette: "catppuccin",
       terminalFontSize: 22,
       terminalWheelSpeed: 10,
@@ -85,6 +86,7 @@ describe("telemetry settings snapshot", () => {
       sidebarRows: "one",
       agentOrder: "activity",
       agentMarks: "mono",
+      statusIndicators: "symbols",
       palette: "catppuccin",
       terminalFontSize: 22,
       terminalWheelSpeed: 10,
@@ -107,6 +109,7 @@ describe("telemetry settings snapshot", () => {
     });
     expect(telemetrySettings(snapshot)).toEqual(snapshot);
     expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toMatchObject({
+      statusIndicators: "classic",
       terminalFontCustom: false,
       chatFontCustom: false,
       shortcutsCustom: false,
@@ -147,6 +150,16 @@ describe("telemetry settings snapshot", () => {
     }
     for (const raw of ["private-terminal-font", "private-chat-font", "private quick reply", "private-order-account-id", "private-hidden-account-id"]) {
       expect(serialized).not.toContain(raw);
+    }
+  });
+
+  it("reports every status indicator choice in a valid snapshot", () => {
+    for (const statusIndicators of ["classic", "dots", "symbols"] as const) {
+      const settings = sanitizeSettings({ statusIndicators });
+      const snapshot = telemetrySettingsSnapshot(settings);
+
+      expect(snapshot.statusIndicators).toBe(statusIndicators);
+      expect(telemetrySettings(snapshot)).toEqual(snapshot);
     }
   });
 

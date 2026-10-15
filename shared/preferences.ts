@@ -18,7 +18,7 @@ export interface SharedPreferences {
   revision: number;
   /** only the settings some browser has shared: one nobody changed is absent, and stays each device's own */
   settings: Partial<Record<SharedSettingKey, unknown>>;
-  /** sidebar pin keys (`machine:pane`), in their order; absent until a browser first shares its pins */
+  /** sidebar pin keys (`machine:pane` for an agent, `machine:workspace:id` for a workspace), in their order; absent until a browser first shares its pins */
   pins?: string[];
 }
 

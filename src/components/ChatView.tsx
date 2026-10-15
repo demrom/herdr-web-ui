@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Search, Target,
+  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target,
   type LucideProps,
 } from "lucide-react";
 
@@ -12,17 +12,13 @@ import "./ChatTimeline.css";
 
 import { AgentMark } from "./AgentMark.tsx";
 import { AnimatedHeight } from "./AnimatedHeight.tsx";
-import { ChatDiffContext, TurnChangedFiles } from "./TurnChangedFiles.tsx";
-import type { RepoDiffTarget } from "../lib/repoDiff.ts";
 import { Markdown, ReservedImage } from "./Markdown.tsx";
 import { ImageLightbox } from "./ImageLightbox.tsx";
 import { PromptCard } from "./PromptCard.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { loadChatTimeline, loadedChatTimeline, useChatTimeline } from "./chatTimelineLoader.ts";
-import { ChatFind } from "./ChatFind.tsx";
 import { ChatMinimap } from "./ChatMinimap.tsx";
 import { minimapTurns } from "../lib/chatMinimap.ts";
-import { chatSearchText, type ChatSearchMatch } from "../lib/chatSearch.ts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { appendChatRowSlots, createChatRowSlots, prependChatRowSlots } from "../lib/chatRows.ts";
 import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory } from "../lib/chatRowState.tsx";
@@ -76,7 +72,6 @@ import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
-import { isMacPlatform } from "../lib/shortcuts.ts";
 import { useT } from "../lib/i18n.ts";
 
 // No row is this object, so the list finds nothing to scroll to.
@@ -98,8 +93,6 @@ const LOAD_OLDER_PX = 400;
 
 export interface ChatViewProps {
   paneId: string;
-  cwd?: string | null;
-  onOpenDiff?: (target: RepoDiffTarget) => void;
   /** Only the active pane owns the chat-local Mod+F shortcut. */
   active?: boolean;
   /** false while the pane sits off-tab (a cached or retained pane): no reads, no conversation-watch */
@@ -331,7 +324,6 @@ function useWholeOutput(ref: string | undefined): { text: string | null; state: 
   useLayoutEffect(() => {
     if (ref !== undefined && result.text !== null && memory && memory.outputs.get(ref) !== result.text) {
       memory.outputs.set(ref, result.text);
-      memory.outputChanged();
     }
   }, [ref, memory, result.text]);
   return saved === undefined ? result : { text: saved, state: "idle", load: result.load };
@@ -448,7 +440,6 @@ function WorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, sh
         part.kind === "thinking" ? <ThinkingRow key={index} stateKey={`thinking:${parts.indexOf(part)}`} text={part.text} />
           : part.kind === "text" ? <div key={index} className="work-narration"><Markdown>{part.text}</Markdown></div>
             : part.kind === "tool" ? <WorkRow key={index} stateKey={`tool:${parts.indexOf(part)}`} paneId={paneId} part={part} /> : null)}
-        <TurnChangedFiles paneId={paneId} parts={parts} />
       </div>
     </AnimatedHeight>
   </section>;
@@ -519,10 +510,9 @@ function UserImages({ paneId, parts, text }: { paneId: string; parts: Conversati
  * The user's words as a raised card. A long message (lib/userMessageFold.ts) is capped at the
  * lines `--chat-fold-lines` names; where the cap cuts it (measured on that message alone, never on
  * every row) the last line fades into the card and "Show full message" opens it. Opened, it stays
- * open while its row leaves and re-enters the list (useChatRowToggle), and Find landing on the
- * turn opens it, so a match is never left behind the fold.
+ * open while its row leaves and re-enters the list (useChatRowToggle).
  */
-function UserMessage({ text, matched }: { text: string; matched: boolean }) {
+function UserMessage({ text }: { text: string }) {
   const t = useT();
   const canFold = useMemo(() => shouldFoldUserMessage(text), [text]);
   const [chosen, setOpen] = useChatRowToggle("fold", false);
@@ -539,15 +529,6 @@ function UserMessage({ text, matched }: { text: string; matched: boolean }) {
     observer.observe(node);
     return () => observer.disconnect();
   }, [capped]);
-  // Find arriving on this turn opens a cut message once; it does not hold it open, so Show less
-  // still works while the match stays on the row
-  const revealed = useRef(false);
-  useEffect(() => {
-    if (!matched) { revealed.current = false; return; }
-    if (revealed.current || !clipped) return;
-    revealed.current = true;
-    setOpen(true);
-  }, [matched, clipped, setOpen]);
   const card = useRef<HTMLDivElement>(null);
   const folding = useRef(false);
   const toggle = (): void => {
@@ -581,8 +562,6 @@ interface TurnProps {
   showThinking: boolean;
   /** the pane's skill names: an answer's text chips them */
   skills?: SkillMatcher | null;
-  /** Find's current match is this turn: a folded message opens so the match can be read */
-  matched?: boolean;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -629,7 +608,7 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, matched = false }: TurnProps) {
+const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
@@ -666,7 +645,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
       <UserImages paneId={paneId} parts={turn.parts} text={text} />
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
       <div className="chat-user-row">
-        {text.length > 0 && <UserMessage text={text} matched={matched} />}
+        {text.length > 0 && <UserMessage text={text} />}
         <div className="chat-turn-meta">{time}{text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
       </div>
       {copyError}
@@ -733,12 +712,11 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   const machineId = useMachineId();
-  const diffContext = useMemo(() => onOpenDiff ? { openDiff: onOpenDiff, cwd } : null, [onOpenDiff, cwd]);
   const skillMatcher = useSkillMatcher(paneId);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
@@ -760,15 +738,9 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   const [newMessages, setNewMessages] = useState(false);
   /** scrolled up from the end: the way back is offered even when nothing new came */
   const [away, setAway] = useState(false);
-  const [findOpen, setFindOpen] = useState(false);
   const [viewer, setViewer] = useState<{ images: GalleryImage[]; index: number } | null>(null);
   const openViewer = useCallback((images: GalleryImage[], index: number) => setViewer({ images, index }), []);
   const closeViewer = useCallback(() => setViewer(null), []);
-  const [matchKey, setMatchKey] = useState<string | null>(null);
-  const findButton = useRef<HTMLButtonElement>(null);
-  const wasFinding = useRef(false);
-  const [outputVersion, setOutputVersion] = useState(0);
-  const outputChanged = useCallback(() => setOutputVersion((version) => version + 1), []);
   /** an answer for this pane arrived (or failed): until then, and while a replaced history is read again, an empty chat is only loading */
   const [loaded, setLoaded] = useState(false);
   const [prompt, setPrompt] = useState<InteractivePrompt | null>(null);
@@ -843,7 +815,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     incarnation.current += 1;
     prependAnchor.current = null;
     slots.current = createChatRowSlots({ machineId, paneId, historyId: history.current ?? null, incarnation: incarnation.current }, 0);
-    setFindOpen(false); setMatchKey(null);
   };
 
   /** What an answer says beside its turns: where older pages start, its metadata, abandoned turns. */
@@ -897,34 +868,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     }
   }, [paneId, machineId]);
 
-  const closeFind = useCallback(() => {
-    setFindOpen(false); setMatchKey(null);
-    const node = scroller.current;
-    if (node && node.scrollHeight - node.clientHeight - node.scrollTop <= 1) {
-      pagingAway.current = false; stickToBottom.current = true; setAway(false); setNewMessages(false);
-    }
-  }, []);
-  useEffect(() => {
-    if (!active || !visible || state.source !== "conversation") return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing) return;
-      if (!scroller.current?.getClientRects().length || (event.target instanceof Element && event.target.closest('[role="dialog"]'))) return;
-      if (event.key === "Escape" && findOpen) {
-        event.preventDefault(); closeFind(); return;
-      }
-      // Mod is Cmd on a Mac (Ctrl+F there moves the caret in a text field) and Ctrl elsewhere
-      const mod = isMacPlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-      if (event.shiftKey || event.altKey || !mod || event.key.toLowerCase() !== "f") return;
-      event.preventDefault();
-      setFindOpen(true);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [active, visible, state.source, findOpen, closeFind]);
-  useLayoutEffect(() => {
-    if (wasFinding.current && !findOpen && active) findButton.current?.focus({ preventScroll: true });
-    wasFinding.current = findOpen;
-  }, [findOpen, active]);
 
   useEffect(() => {
     if (seenSent.current === sentKey) return;
@@ -1301,7 +1244,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       lastScrollTop.current = before;
       if (direction < 0) {
         pagingAway.current = true;
-        // Find, a minimap tick and a restored place scroll through the list, which drops a follow
+        // A minimap tick and a restored place scroll through the list, which drops a follow
         // still waiting there; this native page scroll does not, so drop it here, or it lands after.
         dropPendingListScroll(timeline.current);
       }
@@ -1348,15 +1291,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     if (!slot) throw new Error("A loaded chat turn has no row identity");
     return { key: slot.key, turn, beforeUser: turn.role === "assistant" && shownTurns[index + 1]?.role === "user" };
   }), [shownTurns, rowSlots]);
-  const searchRows = useMemo(() => findOpen ? timelineRows.map((row) => ({ key: row.key, text: chatSearchText(row.turn, rowMemories.get(row.key)?.outputs) })) : [], [findOpen, timelineRows, rowMemories, outputVersion]);
-  const showMatch = useCallback((match: ChatSearchMatch | null) => {
-    setMatchKey(match?.rowKey ?? null);
-    if (match === null) return;
-    const index = timelineRows.findIndex((row) => row.key === match.rowKey);
-    if (index < 0) return;
-    pagingAway.current = true; stickToBottom.current = false; setAway(true);
-    void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0.35 });
-  }, [timelineRows]);
   // Back in a pane the reader left away from the end: the first answer read puts the turn they
   // were on back where it sat, before paint. The list's index scroll starts from estimated heights,
   // so the row is brought to its offset once measured, for a few frames at most; any scroll of the
@@ -1397,7 +1331,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   useEffect(() => () => stopRestore.current?.(), []);
   const minimap = useMemo(() => minimapTurns(shownTurns), [shownTurns]);
   const rowKeys = useMemo(() => timelineRows.map((row) => row.key), [timelineRows]);
-  // a tick takes the reader to its turn the way Find does: reading there, follow left off
+  // a tick takes the reader to its turn: reading there, follow left off
   const jumpToTurn = useCallback((index: number) => {
     pagingAway.current = true; stickToBottom.current = false; setAway(true);
     void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
@@ -1406,9 +1340,9 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
-      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} matched={row.key === matchKey} />
+      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher, matchKey]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher]);
   const header = <>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
@@ -1446,15 +1380,14 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   </>;
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
-  return <ChatDiffContext.Provider value={diffContext}><ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
+  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
     <div className="chat-frame">
-    {state.source === "conversation" && findOpen && <ChatFind key={timelineScope} rows={searchRows} older={typeof olderCursor === "string"} olderState={olderState} onOlder={loadOlder} onMatch={showMatch} onClose={closeFind} />}
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
       // its chunk is still loading: no turn is read until it arrives, so this is the loading state
       ? <div className="chat-view chat-view-virtual" role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
         <div className="chat-transcript chat-transcript-virtual">
-          <div className={findOpen ? "chat-virtual-header chat-virtual-header-with-find" : "chat-virtual-header"}>{header}</div>
+          <div className="chat-virtual-header">{header}</div>
           <div className="chat-virtual-footer">{footer}</div>
         </div>
       </div>
@@ -1467,12 +1400,9 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       following={stickToBottom}
       smoothFollow={smoothFollow}
       memories={rowMemories}
-      outputChanged={outputChanged}
       header={header}
       footer={footer}
       label={t("conversation of {pane}", { pane: paneId })}
-      matchKey={matchKey}
-      finding={findOpen}
       onScroll={onScroll}
       renderRow={renderTurn}
     /> : <div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
@@ -1484,7 +1414,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     </div>}
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} />}
     {jump}
-    {state.source === "conversation" && !findOpen && <button ref={findButton} type="button" className="icon-button chat-find-open" aria-label={t("Find in messages")} title={t("Find in messages")} onClick={() => setFindOpen(true)}><Search aria-hidden="true" /></button>}
     </div>
     </div>
   {/* The prompt card is not part of the transcript: it is drawn on the composer's column, over the
@@ -1500,5 +1429,5 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
-  </ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider></ChatDiffContext.Provider>;
+  </ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider>;
 });

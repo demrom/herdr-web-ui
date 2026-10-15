@@ -79,11 +79,12 @@ try {
       await withPage(browser, {}, async (page) => {
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER);
         assert.match(await agent(page, API).locator(".agent-context").textContent() ?? "", /checkout-api/, "a row names its workspace");
-        assert.equal(await agent(page, API).getByRole("button").count(), 2, "a row is its selector and its ⋯");
-        assert.equal(await agent(page, API).getByRole("button", { name: `More for ${API}`, exact: true }).count(), 1, "the ⋯ is named for its agent");
-        assert.equal(await page.locator(".agents-sidebar .agent-pinned-head").count(), 0, "no Pinned head without pins");
+        // a desktop draws no row ⋯: a right-click or the context-menu key opens the menu
+        assert.equal(await agent(page, API).getByRole("button").count(), 1, "a desktop row is its selector alone");
+        assert.equal(await page.locator(".row-menu-toggle:visible").count(), 0, "no row ⋯ on a desktop");
+        assert.equal(await page.locator(".agents-sidebar .agent-list-pinned, .agents-sidebar .sidebar-pin-mark").count(), 0, "no pinned list without pins");
       });
-      console.log("PASS the Agents list is flat, in herdr's order, each row a selector and a ⋯");
+      console.log("PASS the Agents list is flat, in herdr's order, each row a selector with no ⋯ on a desktop");
 
       // a pane's plan: the composer's chip shows how far it got and opens its steps, as the background
       // tasks do; the header carries no plan of its own
@@ -116,20 +117,40 @@ try {
         await workspace.click({ button: "right", position: { x: 32, y: bounds.height / 2 } });
         const menu = page.getByRole("menu", { name: "checkout-api", exact: true });
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "right-click uses native workspace scope");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "right-click uses native workspace scope");
         const opened = (await menu.boundingBox())!;
         assert.ok(Math.abs(opened.x - bounds.x - 32) <= 1 && Math.abs(opened.y - bounds.y - bounds.height / 2) <= 1, "the menu opens at the pointer");
         assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection")), selected, "right-click leaves the selected pane alone");
         await page.keyboard.press("Escape");
         assert.equal(await page.locator(".header-more-button").evaluate((button) => document.activeElement === button), true, "dismissal returns the prior keyboard focus");
-        await workspace.locator("..").locator(".row-menu-toggle").click();
+        await workspace.focus();
+        await page.keyboard.press("Shift+F10");
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "the ⋯ button and right-click have identical items");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "the context-menu key and right-click have identical items");
         await page.keyboard.press("Escape");
+        const pins = () => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]") as string[]);
+        // a pinned workspace leaves its place for a card at the top of its PC's list, and returns unpinned
+        const workspaceTitles = () => page.locator(".machine-workspaces .workspace-name").allTextContents();
+        const herdrOrder = await workspaceTitles();
+        const infraWorkspace = page.locator(`.workspace-select[data-pane="${panes.infra}"]`);
+        await infraWorkspace.click({ button: "right" });
+        const infraMenu = page.getByRole("menu");
+        await infraMenu.getByRole("menuitem", { name: "Pin workspace", exact: true }).click();
+        const pinnedWorkspaces = page.getByRole("list", { name: "Pinned", exact: true }).filter({ has: page.locator(".workspace-group") });
+        await pinnedWorkspaces.waitFor();
+        const infraName = await infraWorkspace.locator(".workspace-name").textContent();
+        assert.deepEqual(await pinnedWorkspaces.locator(".workspace-name").allTextContents(), [infraName], "the pinned workspace stands in the card");
+        assert.deepEqual(await workspaceTitles(), [infraName, ...herdrOrder.filter((title) => title !== infraName)], "the rest keep herdr's order");
+        assert.equal(await pinnedWorkspaces.locator(".sidebar-pin-mark").count(), 1, "a pinned workspace carries its pin");
+        assert.equal(await infraWorkspace.getAttribute("draggable"), "false", "a pinned workspace is not dragged");
+        assert.ok((await pins()).includes(`local:workspace:${await infraWorkspace.evaluate((row) => row.closest(".workspace-group")?.getAttribute("data-workspace"))}`), "the pin is saved with the agents'");
+        await infraWorkspace.click({ button: "right" });
+        await infraMenu.getByRole("menuitem", { name: "Unpin workspace", exact: true }).click();
+        await pinnedWorkspaces.waitFor({ state: "detached" });
+        assert.deepEqual(await workspaceTitles(), herdrOrder, "unpinned, it returns to herdr's order");
         const agentRow = agent(page, API);
         const agentSelect = agentRow.locator(".agent-select");
         // pin an agent that is not first from its right-click menu: it moves to the top, and nothing is selected
-        const pins = () => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]") as string[]);
         const infraSelect = agent(page, INFRA).locator(".agent-select");
         await page.locator(".header-more-button").focus();
         await infraSelect.click({ button: "right" });
@@ -158,23 +179,22 @@ try {
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER, "unpin restores the source order");
         assert.equal(await infraSelect.evaluate((button) => document.activeElement === button), true, "focus returns to the row as it moves back");
         assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "the menu closes after its item runs");
-        // the ⋯ opens the same menu at its button: pinned, the agent stands under a Pinned head
-        const more = agent(page, API).getByRole("button", { name: `More for ${API}`, exact: true });
-        await agent(page, API).hover();
-        await more.click();
+        // pinned, an agent stands first with a pin, in a list named Pinned under the Agents head alone
+        await agentSelect.click({ button: "right" });
         const apiMenu = page.getByRole("menu", { name: API, exact: true });
         await apiMenu.waitFor();
         await apiMenu.getByRole("menuitem", { name: "Pin agent" }).click();
         await page.waitForFunction((key) => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").includes(key), `local:${panes.api}`);
-        assert.equal(await page.locator(".agents-sidebar .agent-pinned-head").textContent(), "Pinned", "pinned agents stand under a Pinned head");
+        assert.equal(await page.getByRole("list", { name: "Pinned", exact: true }).count(), 1, "the pinned list is named Pinned");
         assert.deepEqual(await page.locator(".agents-sidebar .agent-list-pinned .agent-title").allTextContents(), [API], "the pinned list holds the pinned agent");
-        assert.equal(await more.evaluate((button) => document.activeElement === button), true, "focus returns to the ⋯ in the row's new place");
-        await more.click();
+        assert.equal(await agent(page, API).locator(".sidebar-pin-mark").count(), 1, "a pinned row carries its pin");
+        assert.equal(await page.locator(".agents-sidebar .sidebar-pin-mark").count(), 1, "an unpinned row carries none");
+        await agentSelect.click({ button: "right" });
         await apiMenu.getByRole("menuitem", { name: "Unpin agent" }).click();
         await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").length === 0);
-        assert.equal(await page.locator(".agents-sidebar .agent-pinned-head").count(), 0, "the Pinned head goes with the last pin");
+        assert.equal(await page.locator(".agents-sidebar .agent-list-pinned, .agents-sidebar .sidebar-pin-mark").count(), 0, "the pinned list goes with the last pin");
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER);
-        console.log("PASS workspace right-click scope, pointer anchor and focus; matching ⋯ menu; an agent pins and unpins from its right-click menu and its ⋯, under a Pinned head");
+        console.log("PASS workspace right-click scope, pointer anchor and focus; the context-menu key opens the same menu; a workspace pins into a card and returns to herdr's order; an agent pins and unpins from its right-click menu and the key, marked with a pin");
         await waitStatus(page, API, "done");
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER, "a finish does not move an agent");
         await agentSelect.click();
@@ -203,7 +223,7 @@ try {
         await sheet.getByRole("button", { name: "Pin agent" }).tap();
         await page.waitForFunction((key) => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").includes(key), `local:${panes.api}`);
         await sheet.waitFor({ state: "detached" });
-        assert.equal(await page.locator(".agents-sidebar .agent-pinned-head").textContent(), "Pinned");
+        assert.equal(await agentRow.locator(".sidebar-pin-mark").count(), 1, "the pinned row carries its pin");
         await agentSelect.tap();
         await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.api, { timeout: 5_000 });
         assert.equal(await agentSelect.getAttribute("aria-current"), "true", "a tap still selects the agent");

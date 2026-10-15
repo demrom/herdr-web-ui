@@ -1,6 +1,6 @@
 ### Changed
 - An agent in the Agents list is pinned from its `⋯` menu or a right-click (Pin agent / Unpin
-  agent) instead of a star beside it, and pinned agents stand under a Pinned head. Pins work
+  agent) instead of a star beside it; pinned agents stand first in a card, each marked with a pin. Pins work
   without a setting, and pins saved before stay.
 
 ### Removed

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { loadSidebarPins, pruneSidebarPins, sidebarPinKey, splitPinnedRows, toggleSidebarPin } from "./sidebarPins.ts";
+import { isWorkspacePinKey, loadSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, workspacePinKey } from "./sidebarPins.ts";
 
 describe("sidebar agent pins", () => {
   it("keys a pin by PC and pane", () => {
@@ -37,6 +37,49 @@ describe("sidebar agent pins", () => {
     };
     expect(order(["c", "a"])).toEqual(["c", "a", "b"]);
     expect(order(["missing", "b"])).toEqual(["b", "a", "c"]);
+  });
+
+  it("keys a workspace by PC and marks it as one", () => {
+    expect(workspacePinKey("pc-a", "w1")).toBe("pc-a:workspace:w1");
+    expect(isWorkspacePinKey(workspacePinKey("pc-a", "w1"))).toBe(true);
+    expect(isWorkspacePinKey(sidebarPinKey("pc-a", "w1:p1"))).toBe(false);
+    expect(pinnedWorkspaceIds(["pc-a:workspace:w2", "pc-a:w1:p1", "pc-b:workspace:w3", "pc-a:workspace:w1"], "pc-a")).toEqual(["w2", "w1"]);
+  });
+
+  it("prunes each kind of pin only where it is known", () => {
+    const keys = ["pc-a:workspace:w1", "pc-a:workspace:gone", "pc-b:workspace:gone", "pc-a:p1"];
+    // the Agents list leaves workspace pins alone, even of a loaded PC
+    expect(pruneSidebarPins(keys, new Set(["pc-a:p1"]), [{ id: "pc-a", snapshot: {} }, { id: "pc-b", snapshot: {} }])).toEqual(keys);
+    // a PC's workspace list prunes its own gone workspaces only
+    expect(pruneWorkspacePins(keys, "pc-a", new Set(["w1"]))).toEqual(["pc-a:workspace:w1", "pc-b:workspace:gone", "pc-a:p1"]);
+  });
+
+  it("hoists a pinned repository with its worktrees and a pinned worktree alone", () => {
+    const groups = [
+      { workspace: "repo", children: ["wt1", "wt2"] },
+      { workspace: "solo", children: [] },
+      { workspace: "other", children: [] },
+    ];
+    const split = (ids: string[]) => splitPinnedGroups(groups, ids, (id) => id);
+    expect(split([])).toEqual({ pinned: [], rest: groups });
+    expect(split(["wt2", "other"])).toEqual({
+      pinned: [{ workspace: "wt2", children: [] }, { workspace: "other", children: [] }],
+      rest: [{ workspace: "repo", children: ["wt1"] }, { workspace: "solo", children: [] }],
+    });
+    expect(split(["repo", "wt1", "missing"])).toEqual({
+      pinned: [{ workspace: "repo", children: ["wt2"] }, { workspace: "wt1", children: [] }],
+      rest: [{ workspace: "solo", children: [] }, { workspace: "other", children: [] }],
+    });
+  });
+
+  it("holds a pinned repository's worktrees in place with it", () => {
+    const groups = [
+      { workspace: "repo", children: ["wt1", "wt2"] },
+      { workspace: "solo", children: [] },
+    ];
+    const { pinned } = splitPinnedGroups(groups, ["repo"], (id) => id);
+    expect([...pinnedGroupIds(pinned, (id) => id)]).toEqual(["repo", "wt1", "wt2"]);
+    expect(pinnedGroupIds([], (id: string) => id).size).toBe(0);
   });
 
   it("starts with no pins when storage denies the read", () => {

@@ -55,6 +55,7 @@ export type DictationLanguage = "auto" | (typeof DICTATION_LANGUAGES)[number];
 /** the lens a pane opens in until it is switched there: auto is chat for an agent on a touch screen, else terminal */
 export type DefaultView = "auto" | "chat" | "terminal";
 import { sanitizeShortcutOverrides, type ShortcutOverrides } from "./shortcutBindings.ts";
+import type { StatusIndicators } from "./status.ts";
 
 export interface Settings {
   terminalInputMode: "auto" | "line" | "direct";
@@ -71,6 +72,8 @@ export interface Settings {
   agentOrder: AgentOrder;
   /** Agent logos: brand colors, or without color, so a list of one agent is not a stripe of tiles */
   agentMarks: AgentMarks;
+  /** the sidebar's state marks: this app's own, or herdr's dots or symbols, as its `[ui] status_indicators` (lib/status.ts) */
+  statusIndicators: StatusIndicators;
   /** the chrome color family, keyed as data-palette in src/styles.css */
   palette: Palette;
   /** System theme only: the palette drawn while the OS is light, and while it is dark (see paletteFor) */
@@ -174,6 +177,7 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
     sidebarRows: settings.sidebarRows,
     agentOrder: settings.agentOrder,
     agentMarks: settings.agentMarks,
+    statusIndicators: settings.statusIndicators,
     palette: settings.palette,
     paletteLight: settings.paletteLight,
     paletteDark: settings.paletteDark,
@@ -233,7 +237,7 @@ export const SETTING_SCOPE = {
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
   chatFontSize: "device", chatFontFamily: "device", uiFontSize: "device", chatWidth: "device", enterSends: "device",
   keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
-  paletteLight: "device", paletteDark: "device",
+  paletteLight: "device", paletteDark: "device", statusIndicators: "device",
   voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does.
   wrapCode: "device", markdownWidth: "device", diffStyle: "device",
@@ -254,6 +258,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarRows: "two",
   agentOrder: "workspace",
   agentMarks: "color",
+  statusIndicators: "classic",
   palette: "amber",
   paletteLight: "amber",
   paletteDark: "amber",
@@ -418,6 +423,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,
     agentOrder: record["agentOrder"] === "workspace" || record["agentOrder"] === "activity" ? record["agentOrder"] : DEFAULT_SETTINGS.agentOrder,
     agentMarks: record["agentMarks"] === "color" || record["agentMarks"] === "mono" ? record["agentMarks"] : DEFAULT_SETTINGS.agentMarks,
+    statusIndicators: record["statusIndicators"] === "classic" || record["statusIndicators"] === "dots" || record["statusIndicators"] === "symbols" ? record["statusIndicators"] : DEFAULT_SETTINGS.statusIndicators,
     palette,
     // a record from before the pair starts both from its one palette, so System mode looks as it did
     paletteLight: PALETTES.find((name) => name === record["paletteLight"]) ?? palette,

@@ -34,6 +34,7 @@ export interface TelemetrySettings {
   sidebarRows: "one" | "two";
   agentOrder: "workspace" | "activity";
   agentMarks: "color" | "mono";
+  statusIndicators: "classic" | "dots" | "symbols";
   palette: "amber" | "charcoal" | "catppuccin";
   /** the pair System mode switches between */
   paletteLight: "amber" | "charcoal" | "catppuccin";
@@ -104,6 +105,7 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   sidebarRows: oneOf(["one", "two"]),
   agentOrder: oneOf(["workspace", "activity"]),
   agentMarks: oneOf(["color", "mono"]),
+  statusIndicators: oneOf(["classic", "dots", "symbols"]),
   palette: oneOf(PALETTES),
   paletteLight: oneOf(PALETTES),
   paletteDark: oneOf(PALETTES),

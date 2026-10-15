@@ -16,6 +16,7 @@ const settings: TelemetrySettings = {
   sidebarRows: "two",
   agentOrder: "activity",
   agentMarks: "mono",
+  statusIndicators: "symbols",
   palette: "catppuccin",
   paletteLight: "amber",
   paletteDark: "catppuccin",
@@ -115,6 +116,7 @@ describe("telemetry receiver", () => {
     const { env, rows } = fakeDb();
     const invalidSettings = [
       { ...settings, theme: "user-selected theme" },
+      { ...settings, statusIndicators: "unknown" },
       { ...settings, terminalWheelSpeed: 11 },
       { ...settings, chatFontSize: "16px" },
       // the Turkish UI language was removed before any release sent a snapshot
