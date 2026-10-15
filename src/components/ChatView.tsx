@@ -953,8 +953,13 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
           await loadChatTimeline();
           if (cancelled || generation !== olderGeneration.current) return;
         }
-        if (settings.chatHistoryCache && conversation !== lastAnswer.current && conversation.replace_from === 0 && lastAnswer.current !== null) {
+        if (settings.chatHistoryCache && conversation !== lastAnswer.current && conversation.replace_from === 0 && lastAnswer.current !== null
+          && history.current === conversation.history_id) {
+          // A full transport refresh can revise a running tool without replacing the conversation.
+          // Keep the newest rows' identities (and the list's anchor) while discarding stale older pages.
+          const newestSlots = { ...slots.current, rows: slots.current.rows.slice(olderCount.current) };
           dropOlder(); generation = olderGeneration.current;
+          slots.current = newestSlots;
         }
         if (history.current !== conversation.history_id) {
           dropOlder(); generation = olderGeneration.current;

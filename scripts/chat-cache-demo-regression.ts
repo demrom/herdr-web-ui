@@ -483,4 +483,49 @@ try {
   await recovery.getByText("Beginning durable page", { exact: true }).waitFor();
   console.log("PASS clear and enable-after-paging retain visible older pages");
   await resilient.close();
+  // Isolate this transport transition from the cache-size/LRU fixtures above.
+  bodies.clear(); earlier.clear(); brokenBefore = null;
+  const crashContext = await browser.newContext();
+  await crashContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", chatHistoryCache: true })));
+  const crashPage = await crashContext.newPage();
+  const beforeCrash = records.length;
+  await crashPage.goto(`http://cache.test:${server.port}/`);
+  await crashPage.locator(".chat-turn-agent").first().waitFor();
+  await settings(crashPage); await crashPage.getByText(/MB in 1 chats/).waitFor(); await crashPage.keyboard.press("Escape");
+  const crashPane = records.slice(beforeCrash)[0]!.pane;
+  // A stale prefix and a sliding newest page must keep the visible chat usable
+  // while the bridge supplies the gap between the two page cursors.
+  const renderErrors: string[] = [];
+  crashPage.on("console", (message) => { if (message.type() === "error") renderErrors.push(message.text()); });
+  crashPage.on("pageerror", (error) => renderErrors.push(error.stack ?? error.message));
+  let releaseGap!: () => void;
+  const gapHeld = new Promise<void>((resolve) => { releaseGap = resolve; });
+  let gapArrived = false;
+  await crashPage.route("**/pane/conversation?*", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("before") === "synthetic-slide") {
+      gapArrived = true;
+      await gapHeld;
+    }
+    await route.continue();
+  });
+  const newest = bodies.get(crashPane)!;
+  newest.cursor = "synthetic-slide";
+  newest.turns[0]!.parts = [{ kind: "text", text: "Rewritten first synthetic question" }];
+  earlier.set("synthetic-slide", { ...newest, cursor: null, turns: [{ role: "user", ts: null, parts: [{ kind: "text", text: "Synthetic gap question" }] }] });
+  try {
+    await until(() => gapArrived, "stale prefix sliding-page gap");
+    await crashPage.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    assert.equal(await crashPage.locator(".chat-empty[role=alert]").count(), 0, renderErrors.join("\n"));
+    assert(await crashPage.locator(".chat-turn-agent").count() > 0, "visible turns survive a pending gap read");
+    if (process.env.UI_EVIDENCE_DIR) await crashPage.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "chat-stale-delta-gap.png") });
+  } finally { releaseGap(); }
+  await until(async () => {
+    await crashPage.getByRole("log").first().evaluate((node) => { node.scrollTop = 0; node.dispatchEvent(new Event("scroll")); });
+    return crashPage.getByText("Rewritten first synthetic question", { exact: true }).isVisible();
+  }, "refreshed first turn after gap loading");
+  assert.deepEqual(renderErrors, [], "stale delta and gap completion render without errors");
+  await crashPage.unroute("**/pane/conversation?*");
+  console.log("PASS stale delta with a sliding page keeps chat readable during gap loading");
+
+  await crashContext.close();
 } finally { release(); await browser?.close(); server?.stop(true); rmSync(app, { recursive: true, force: true }); }
